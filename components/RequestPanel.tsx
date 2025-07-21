@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import { PostmanItem, PostmanRequest } from '../types';
 import CodeEditor from './CodeEditor';
@@ -8,7 +7,7 @@ interface RequestPanelProps {
     item: PostmanItem;
     response: any;
     loading: boolean;
-    onSend: (request: PostmanRequest, files?: Record<string, File>) => void;
+    onSend: (item: PostmanItem, files?: Record<string, File>) => void;
     onUpdateItem: (item: PostmanItem) => void;
     onGenerateTests: (item: PostmanItem, response: any) => void;
     layoutMode: 'horizontal' | 'vertical';
@@ -251,7 +250,7 @@ const RequestPanel: React.FC<RequestPanelProps> = ({ item, response, loading, on
                         {['GET', 'POST', 'PUT', 'PATCH', 'DELETE'].map(m => <option key={m} value={m}>{m}</option>)}
                     </select>
                     <input type="text" value={currentItem.request?.url?.raw || ''} onChange={handleUrlChange} className="flex-1 bg-gray-900 border border-gray-600 rounded px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="Enter request URL"/>
-                    <button onClick={() => onSend(currentItem.request!, formFiles)} disabled={loading} className="px-4 py-1.5 bg-blue-600 hover:bg-blue-500 rounded text-white font-semibold disabled:bg-blue-800 disabled:cursor-wait">
+                    <button onClick={() => onSend(currentItem, formFiles)} disabled={loading} className="px-4 py-1.5 bg-blue-600 hover:bg-blue-500 rounded text-white font-semibold disabled:bg-blue-800 disabled:cursor-wait">
                         {loading ? 'Sending...' : 'Send'}
                     </button>
                     <button 
@@ -293,7 +292,7 @@ const RequestPanel: React.FC<RequestPanelProps> = ({ item, response, loading, on
                     </select>
                     <input type="text" value={currentItem.request?.url?.raw || ''} onChange={handleUrlChange} className="flex-1 bg-gray-700 border border-gray-600 rounded px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm" placeholder="Enter request URL"/>
                  </div>
-                 <button onClick={() => onSend(currentItem.request!, formFiles)} disabled={loading} className="mt-2 w-full px-4 py-1.5 bg-blue-600 hover:bg-blue-500 rounded text-white font-semibold disabled:bg-blue-800 disabled:cursor-wait">
+                 <button onClick={() => onSend(currentItem, formFiles)} disabled={loading} className="mt-2 w-full px-4 py-1.5 bg-blue-600 hover:bg-blue-500 rounded text-white font-semibold disabled:bg-blue-800 disabled:cursor-wait">
                     {loading ? 'Sending...' : 'Send'}
                  </button>
             </div>
