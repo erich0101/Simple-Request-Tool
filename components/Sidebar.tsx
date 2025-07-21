@@ -1,5 +1,3 @@
-
-
 import React, { useRef, useState, useEffect } from 'react';
 import { PostmanCollection, PostmanItem } from '../types';
 import { FolderIcon, ImportIcon, ExportIcon, PlusIcon, ChevronDownIcon, ChevronRightIcon, PencilIcon, TrashIcon, FolderPlusIcon, KeyIcon, LinkedInIcon, GitHubIcon } from './icons';
@@ -65,9 +63,8 @@ const Sidebar: React.FC<SidebarProps> = (props) => {
             <div
                 key={item.id}
                 style={{ paddingLeft: `${depth * 0.75}rem` }}
-                className="relative"
             >
-                <div className={`flex items-center p-2 rounded cursor-pointer hover:bg-gray-700/50 w-full group`}>
+                <div className={`relative flex items-center p-2 rounded cursor-pointer hover:bg-gray-700/50 w-full group`}>
                      <input
                         type="checkbox"
                         checked={selectedIds.has(item.id!)}
@@ -80,7 +77,7 @@ const Sidebar: React.FC<SidebarProps> = (props) => {
                         title="Select for export"
                     />
 
-                    {/* Item Content */}
+                    {/* Item Content now takes full width */}
                     <div className="flex items-center flex-1 min-w-0" onClick={() => isFolder ? setOpenFolders(p => ({...p, [item.id!]: !p[item.id!]})) : setActiveRequestId(item.id!)}>
                         {isFolder ? (
                             openFolders[item.id!] ? <ChevronDownIcon className="w-4 h-4 mr-1 flex-shrink-0" /> : <ChevronRightIcon className="w-4 h-4 mr-1 flex-shrink-0" />
@@ -109,25 +106,28 @@ const Sidebar: React.FC<SidebarProps> = (props) => {
                             <span className={`truncate ${item.id === activeRequestId && !isFolder ? 'text-blue-400' : ''}`} onDoubleClick={() => handleStartEditing(item)}>{item.name}</span>
                         )}
                     </div>
-                    {/* Hover controls */}
-                    <div className="flex items-center space-x-1 pl-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                        <button title="Renombrar" onClick={(e) => { e.stopPropagation(); handleStartEditing(item); }} className="p-1 rounded hover:bg-gray-600">
-                           <PencilIcon className="w-4 h-4 text-gray-400 hover:text-white" />
-                        </button>
-                        {isFolder && (
-                            <button title="Nueva Request" onClick={(e) => { e.stopPropagation(); onNewRequest(item.id!); }} className="p-1 rounded hover:bg-gray-600">
-                                <PlusIcon className="w-4 h-4 text-gray-400 hover:text-white" />
+                    
+                    {/* Hover controls are now absolutely positioned */}
+                    {editingId !== item.id &&
+                        <div className="absolute right-1 top-1/2 -translate-y-1/2 flex items-center space-x-0.5 p-1 bg-gray-800 border border-gray-700 rounded-md shadow-lg opacity-0 group-hover:opacity-100 transition-opacity">
+                            <button title="Renombrar" onClick={(e) => { e.stopPropagation(); handleStartEditing(item); }} className="p-1 rounded hover:bg-gray-600">
+                               <PencilIcon className="w-4 h-4 text-gray-400 hover:text-white" />
                             </button>
-                        )}
-                        {isFolder && (
-                            <button title="Nueva Carpeta" onClick={(e) => { e.stopPropagation(); onNewFolder(item.id!); }} className="p-1 rounded hover:bg-gray-600">
-                                <FolderPlusIcon className="w-4 h-4 text-gray-400 hover:text-white" />
+                            {isFolder && (
+                                <button title="Nueva Request" onClick={(e) => { e.stopPropagation(); onNewRequest(item.id!); }} className="p-1 rounded hover:bg-gray-600">
+                                    <PlusIcon className="w-4 h-4 text-gray-400 hover:text-white" />
+                                </button>
+                            )}
+                            {isFolder && (
+                                <button title="Nueva Carpeta" onClick={(e) => { e.stopPropagation(); onNewFolder(item.id!); }} className="p-1 rounded hover:bg-gray-600">
+                                    <FolderPlusIcon className="w-4 h-4 text-gray-400 hover:text-white" />
+                                </button>
+                            )}
+                            <button title="Borrar" onClick={(e) => { e.stopPropagation(); onDeleteItem(item.id!); }} className="p-1 rounded hover:bg-gray-600">
+                               <TrashIcon className="w-4 h-4 text-gray-400 hover:text-red-500" />
                             </button>
-                        )}
-                        <button title="Borrar" onClick={(e) => { e.stopPropagation(); onDeleteItem(item.id!); }} className="p-1 rounded hover:bg-gray-600">
-                           <TrashIcon className="w-4 h-4 text-gray-400 hover:text-red-500" />
-                        </button>
-                    </div>
+                        </div>
+                    }
                 </div>
 
                 {isFolder && openFolders[item.id!] && item.item && (
@@ -181,7 +181,7 @@ const Sidebar: React.FC<SidebarProps> = (props) => {
                             <LinkedInIcon className="w-5 h-5" />
                         </a>
                         <a href="https://github.com/erich0101" target="_blank" rel="noopener noreferrer" title="GitHub Profile">
-                            <GitHubIcon className="w-5 h-5 text-gray-400 hover:text-white" />
+                            <GitHubIcon className="w-5 h-5 text-gray-200 hover:text-white" />
                         </a>
                     </div>
                 </div>
