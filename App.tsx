@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { PostmanCollection, PostmanItem, PostmanRequest, TestResult, ResponseData } from './types';
 import Layout from './components/Layout';
 import Sidebar from './components/Sidebar';
@@ -63,6 +63,11 @@ const App: React.FC = () => {
         const width = savedWidth ? parseInt(savedWidth, 10) : 320;
         return isNaN(width) ? 320 : Math.max(240, Math.min(width, 600)); // Constraints
     });
+     const [requestPanelHeight, setRequestPanelHeight] = useState<number>(() => {
+        const savedHeight = localStorage.getItem('miniPostmanRequestPanelHeight');
+        const height = savedHeight ? parseInt(savedHeight, 10) : 300;
+        return isNaN(height) ? 300 : Math.max(150, Math.min(height, 800));
+    });
 
     useEffect(() => {
         const savedCollection = localStorage.getItem('miniPostmanCollection');
@@ -122,6 +127,10 @@ const App: React.FC = () => {
     useEffect(() => {
         localStorage.setItem('miniPostmanSidebarWidth', String(sidebarWidth));
     }, [sidebarWidth]);
+    
+    useEffect(() => {
+        localStorage.setItem('miniPostmanRequestPanelHeight', String(requestPanelHeight));
+    }, [requestPanelHeight]);
 
      useEffect(() => {
         if (apiKey) {
@@ -776,6 +785,45 @@ const App: React.FC = () => {
 
     // --- END IMPORT/EXPORT LOGIC ---
 
+    // --- START PANEL RESIZING LOGIC ---
+    const isResizingRequestPanel = useRef(false);
+    const mainPanelRef = useRef<HTMLDivElement>(null);
+
+    const handleRequestPanelMouseMove = useCallback((e: MouseEvent) => {
+        if (isResizingRequestPanel.current && mainPanelRef.current) {
+            const mainPanelTop = mainPanelRef.current.getBoundingClientRect().top;
+            const totalHeight = mainPanelRef.current.clientHeight;
+            const newHeight = Math.max(150, Math.min(e.clientY - mainPanelTop, totalHeight - 150));
+            setRequestPanelHeight(newHeight);
+        }
+    }, [setRequestPanelHeight]);
+
+    const handleRequestPanelMouseUp = useCallback(() => {
+        isResizingRequestPanel.current = false;
+        window.removeEventListener('mousemove', handleRequestPanelMouseMove);
+        window.removeEventListener('mouseup', handleRequestPanelMouseUp);
+        document.body.style.cursor = 'default';
+        document.body.style.userSelect = 'auto';
+    }, [handleRequestPanelMouseMove]);
+    
+    const handleRequestPanelMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
+        e.preventDefault();
+        isResizingRequestPanel.current = true;
+        document.body.style.cursor = 'row-resize';
+        document.body.style.userSelect = 'none';
+        window.addEventListener('mousemove', handleRequestPanelMouseMove);
+        window.addEventListener('mouseup', handleRequestPanelMouseUp);
+    };
+    
+    useEffect(() => {
+        return () => {
+            window.removeEventListener('mousemove', handleRequestPanelMouseMove);
+            window.removeEventListener('mouseup', handleRequestPanelMouseUp);
+        };
+    }, [handleRequestPanelMouseMove, handleRequestPanelMouseUp]);
+    // --- END PANEL RESIZING LOGIC ---
+
+
     const activeResponseData = activeRequestId ? responses[activeRequestId] : null;
     const isLoading = loadingRequestId === activeRequestId;
 
@@ -844,14 +892,31 @@ const App: React.FC = () => {
                         {activeRequestItem && activeRequestItem.request ? (
                             <>
                                 {/* Desktop Split View */}
-                                <div className={`hidden md:flex flex-1 overflow-hidden h-full ${layoutMode === 'horizontal' ? 'flex-col' : 'flex-row'}`}>
-                                    <div className={`overflow-hidden ${layoutMode === 'horizontal' ? 'h-1/2' : 'w-1/2'}`}>
-                                       {requestPanelComponent}
-                                    </div>
-                                    <div className={`flex-shrink-0 bg-gray-700 ${layoutMode === 'horizontal' ? 'w-full h-[1px] cursor-row-resize' : 'h-full w-[1px] cursor-col-resize'}`}></div>
-                                    <div className={`overflow-hidden ${layoutMode === 'horizontal' ? 'h-1/2' : 'w-1/2'}`}>
-                                        {responsePanelComponent}
-                                    </div>
+                                <div ref={mainPanelRef} className={`hidden md:flex flex-1 overflow-hidden h-full ${layoutMode === 'horizontal' ? 'flex-col' : 'flex-row'}`}>
+                                    {layoutMode === 'horizontal' ? (
+                                        <>
+                                            <div className="overflow-hidden" style={{ height: `${requestPanelHeight}px` }}>
+                                               {requestPanelComponent}
+                                            </div>
+                                            <div
+                                                onMouseDown={handleRequestPanelMouseDown}
+                                                className="flex-shrink-0 bg-gray-700 w-full h-[2px] cursor-row-resize hover:bg-blue-500 transition-colors"
+                                            />
+                                            <div className="overflow-hidden flex-1">
+                                                {responsePanelComponent}
+                                            </div>
+                                        </>
+                                    ) : (
+                                        <>
+                                            <div className="overflow-hidden w-1/2">
+                                               {requestPanelComponent}
+                                            </div>
+                                            <div className="flex-shrink-0 bg-gray-700 h-full w-[1px]"></div>
+                                            <div className="overflow-hidden w-1/2">
+                                                {responsePanelComponent}
+                                            </div>
+                                        </>
+                                    )}
                                 </div>
                                 {/* Mobile Tabbed View */}
                                 <div className="md:hidden flex flex-col h-full">
