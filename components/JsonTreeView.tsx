@@ -54,7 +54,7 @@ const JsonNode: React.FC<JsonNodeProps> = ({ data, nodeKey, depth, isParentArray
 
     return (
         <div style={{ marginLeft: depth > 0 ? '1rem' : '0' }}>
-            <div className="flex group items-start hover:bg-gray-700/20 py-0.5 rounded">
+            <div className="flex items-start hover:bg-gray-700/20 py-0.5 rounded">
                  <div
                     onClick={() => isCollapsible && setIsCollapsed(!isCollapsed)}
                     className="flex-shrink-0 w-5 h-5 flex items-center justify-center cursor-pointer"
@@ -76,13 +76,20 @@ const JsonNode: React.FC<JsonNodeProps> = ({ data, nodeKey, depth, isParentArray
                     )}
                     {renderValue()}
                 </div>
-                 <div
-                    onClick={handleCopy}
-                    className="flex-shrink-0 w-6 h-5 flex items-center justify-center cursor-pointer text-gray-500 hover:text-white opacity-0 group-hover:opacity-100 transition-opacity"
-                    title={`Copy value`}
+                <button
+                    onClick={(e) => {
+                        e.stopPropagation();
+                        handleCopy();
+                    }}
+                    className="flex-shrink-0 p-2 rounded-md text-gray-300 bg-gray-700 hover:text-white hover:bg-gray-600 focus:outline-none focus:ring-1 focus:ring-blue-500 transition-colors"
+                    title="Copy value"
                 >
-                    {copied ? <CheckCircleIcon className="w-4 h-4 text-green-500" /> : <CopyIcon className="w-4 h-4" />}
-                </div>
+                    {copied ? (
+                        <CheckCircleIcon className="w-5 h-5 text-green-500" />
+                    ) : (
+                        <CopyIcon className="w-5 h-5 text-white" />
+                    )}
+                </button>
             </div>
 
             {!isCollapsed && isCollapsible && (
