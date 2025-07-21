@@ -1,0 +1,27 @@
+{
+  "name": "mini-qa-request---ai-powered-api-client",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@google/genai": "^1.10.0",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "@codemirror/lang-javascript": "^6.2.4",
+    "@uiw/react-codemirror": "^4.24.1",
+    "@codemirror/lang-json": "^6.0.2",
+    "@uiw/codemirror-theme-okaidia": "^4.24.1",
+    "@codemirror/view": "^6.28.0",
+    "js-yaml": "^4.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.14.0",
+    "typescript": "~5.7.2",
+    "vite": "^6.2.0"
+  }
+}

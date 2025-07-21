@@ -1,0 +1,6 @@
+{
+  "name": "Mini QA Request - AI-Powered API Client",
+  "description": "Un cliente API ligero y basado en navegador, similar a Postman. Permite importar colecciones de Postman, ejecutar solicitudes y ejecutar pruebas. Incluye un asistente basado en IA para generar automáticamente casos de prueba para los endpoints de tu API.",
+  "requestFramePermissions": [],
+  "prompt": ""
+}
