@@ -1,5 +1,3 @@
-
-
 import React, { useState, useEffect, useCallback } from 'react';
 import { PostmanCollection, PostmanItem, PostmanRequest, TestResult, ResponseData } from './types';
 import Layout from './components/Layout';
@@ -459,7 +457,7 @@ const App: React.FC = () => {
             }
         }
         return ids;
-    }, [collection]);
+    }, []);
 
     const handleSelectionChange = useCallback((itemId: string, isSelected: boolean) => {
         if (!collection) return;
@@ -549,6 +547,8 @@ const App: React.FC = () => {
     };
 
     const parseCurlCommand = (curlCommand: string): Partial<PostmanRequest> & { url: { raw: string } } => {
+        // Updated regex to better handle single-quoted multi-line data.
+        // The regex splits by space but respects quotes.
         const tokens = curlCommand.replace(/\\\n/g, ' ').match(/(?:[^\s"']+|"[^"]*"|'[^']*')/g) || [];
     
         const request: Partial<PostmanRequest> & { url: { raw: string } } = {
@@ -560,42 +560,91 @@ const App: React.FC = () => {
     
         let i = 0;
         while (i < tokens.length) {
-            let token = tokens[i];
+            const token = tokens[i];
             const unquote = (t: string) => t.startsWith("'") && t.endsWith("'") || t.startsWith('"') && t.endsWith('"') ? t.slice(1, -1) : t;
     
             switch (token) {
                 case 'curl':
+                    // Look for the URL immediately after `curl` if it's not a flag
                     if (tokens[i + 1] && !tokens[i + 1].startsWith('-')) {
                         request.url.raw = unquote(tokens[i + 1]);
                         i++; 
                     }
                     break;
+                
+                case '--location':
+                    // The next token is expected to be the URL.
+                    if (tokens[i + 1] && !tokens[i + 1].startsWith('-')) {
+                        request.url.raw = unquote(tokens[++i]);
+                    }
+                    break;
+
                 case '-X':
                 case '--request':
                     request.method = unquote(tokens[++i]).toUpperCase() as PostmanRequest['method'];
                     break;
+
                 case '-H':
                 case '--header':
                     const headerLine = unquote(tokens[++i]);
-                    const separatorIndex = headerLine.indexOf(':');
-                    if (separatorIndex !== -1) {
-                        const key = headerLine.substring(0, separatorIndex).trim();
-                        const value = headerLine.substring(separatorIndex + 1).trim();
+                    const separatorIndexHeader = headerLine.indexOf(':');
+                    if (separatorIndexHeader !== -1) {
+                        const key = headerLine.substring(0, separatorIndexHeader).trim();
+                        const value = headerLine.substring(separatorIndexHeader + 1).trim();
                         if (key) {
                             request.header?.push({ key, value, type: 'text' });
                         }
                     }
                     break;
+
                 case '--data':
                 case '--data-raw':
                 case '-d':
-                    if (request.body) request.body.raw = unquote(tokens[++i]);
+                    if (request.body) {
+                        request.body.mode = 'raw';
+                        request.body.raw = unquote(tokens[++i]);
+                    }
                     if (request.method === 'GET') {
                         request.method = 'POST';
                     }
                     break;
+                
+                case '--form':
+                    const formArg = unquote(tokens[++i]);
+                    const separatorIndexForm = formArg.indexOf('=');
+                    
+                    if (separatorIndexForm !== -1) {
+                        const key = formArg.substring(0, separatorIndexForm).trim();
+                        let value = formArg.substring(separatorIndexForm + 1);
+                        
+                        // Set body mode to formdata
+                        if (request.body?.mode !== 'formdata') {
+                            request.body = { mode: 'formdata', formdata: [] };
+                        }
+                        
+                        // Ensure formdata is initialized
+                        if (!request.body.formdata) {
+                            request.body.formdata = [];
+                        }
+
+                        if (value.startsWith('@')) {
+                            // It's a file
+                            const filePath = unquote(value.substring(1));
+                            request.body.formdata.push({ key, value: filePath, type: 'file' });
+                        } else {
+                            // It's a text value
+                            request.body.formdata.push({ key, value: unquote(value), type: 'text' });
+                        }
+
+                        if (request.method === 'GET') {
+                            request.method = 'POST';
+                        }
+                    }
+                    break;
+
                 default:
-                    if (!request.url.raw && (token.includes('http://') || token.includes('https://'))) {
+                    // Fallback for URL if it wasn't caught earlier
+                    if (!request.url.raw && token.startsWith('http')) {
                          request.url.raw = unquote(token);
                     }
                     break;
