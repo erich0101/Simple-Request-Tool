@@ -38,7 +38,7 @@ const App: React.FC = () => {
     const [collection, setCollection] = useState<PostmanCollection | null>(null);
     const [activeRequestId, setActiveRequestId] = useState<string | null>(null);
     const [responses, setResponses] = useState<Record<string, ResponseData>>({});
-    const [loadingRequestId, setLoadingRequestId] = useState<string | null>(null);
+    const [loadingItemId, setLoadingItemId] = useState<string | null>(null);
     const [isErrorModalOpen, setErrorModalOpen] = useState(false);
     const [isImportModalOpen, setImportModalOpen] = useState(false);
     const [isExportModalOpen, setExportModalOpen] = useState(false);
@@ -302,8 +302,9 @@ const App: React.FC = () => {
     
     // --- END RECURSIVE ITEM MANIPULATION ---
 
-    const handleSendRequest = async (request: PostmanRequest, files?: Record<string, File>) => {
-        if (!request.id) return;
+    const handleSendRequest = async (item: PostmanItem, files?: Record<string, File>) => {
+        const { id: itemId, request } = item;
+        if (!itemId || !request) return;
 
         const prepareUrl = (rawUrl: string): string => {
             let url = rawUrl.trim();
@@ -316,13 +317,13 @@ const App: React.FC = () => {
 
         const rawUrl = request.url?.raw || '';
         if (!rawUrl.trim()) {
-            setResponses(prev => ({ ...prev, [request.id!]: { ...prev[request.id!], response: { status: 'Error', body: 'Request URL is empty.' } } }));
+            setResponses(prev => ({ ...prev, [itemId]: { ...prev[itemId], response: { status: 'Error', body: 'Request URL is empty.' } } }));
             return;
         }
         const url = prepareUrl(rawUrl);
 
-        setLoadingRequestId(request.id);
-        setResponses(prev => ({...prev, [request.id!]: { response: null, testResults: [] }}));
+        setLoadingItemId(itemId);
+        setResponses(prev => ({...prev, [itemId]: { response: null, testResults: [] }}));
 
         try {
             const headers = request.header?.reduce((acc, h) => {
@@ -378,7 +379,7 @@ const App: React.FC = () => {
                 testResults = await runTests(testScript, res, responseBody);
             }
 
-            setResponses(prev => ({ ...prev, [request.id!]: { response: responseData, testResults } }));
+            setResponses(prev => ({ ...prev, [itemId]: { response: responseData, testResults } }));
 
         } catch (error) {
             let errorMessage = 'An unknown error occurred.';
@@ -390,8 +391,8 @@ const App: React.FC = () => {
             }
              setResponses(prev => ({
                 ...prev,
-                [request.id!]: {
-                    ...prev[request.id!],
+                [itemId]: {
+                    ...prev[itemId],
                     response: {
                         status: 'Error',
                         body: errorMessage,
@@ -399,7 +400,7 @@ const App: React.FC = () => {
                 }
             }));
         } finally {
-            setLoadingRequestId(null);
+            setLoadingItemId(null);
             setMainView('response'); // Switch to response view on mobile
         }
     };
@@ -417,7 +418,7 @@ const App: React.FC = () => {
             return;
         }
 
-        setLoadingRequestId(itemToUpdate.id);
+        setLoadingItemId(itemToUpdate.id);
         try {
             const { testScript } = await generateTestsForRequest(itemToUpdate.request, responseData, apiKey);
 
@@ -444,7 +445,7 @@ const App: React.FC = () => {
             console.error("Failed to generate tests:", error);
             alert(`Failed to generate tests. ${error instanceof Error ? error.message : "Check the console for details."}`);
         } finally {
-            setLoadingRequestId(null);
+            setLoadingItemId(null);
         }
     };
 
@@ -825,7 +826,7 @@ const App: React.FC = () => {
 
 
     const activeResponseData = activeRequestId ? responses[activeRequestId] : null;
-    const isLoading = loadingRequestId === activeRequestId;
+    const isLoading = loadingItemId === activeRequestId;
 
     const requestPanelComponent = activeRequestItem && (
         <RequestPanel
