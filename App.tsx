@@ -81,7 +81,16 @@ const App: React.FC = () => {
         }
         const savedResponses = localStorage.getItem('miniPostmanResponses');
         if (savedResponses) {
-            setResponses(JSON.parse(savedResponses));
+            const parsedResponses = JSON.parse(savedResponses);
+            // Hydrate responses to ensure the response object exists, preventing inconsistencies
+            const hydratedResponses: Record<string, ResponseData> = {};
+            for (const key in parsedResponses) {
+                hydratedResponses[key] = {
+                    response: parsedResponses[key].response || null,
+                    testResults: parsedResponses[key].testResults || []
+                }
+            }
+            setResponses(hydratedResponses);
         }
         const savedActiveId = localStorage.getItem('miniPostmanActiveId');
         if (savedActiveId) {
@@ -347,7 +356,7 @@ const App: React.FC = () => {
         setResponses(prev => ({...prev, [itemId]: { response: null, testResults: [] }}));
 
         try {
-            const headers = request.header?.reduce((acc, h) => {
+            const headers = request.header?.filter(h => h.key.toLowerCase() !== 'content-length').reduce((acc, h) => {
                 if(h.key && h.value) acc[substitute(h.key)] = substitute(h.value);
                 return acc;
             }, {} as Record<string, string>) || {};
@@ -384,6 +393,22 @@ const App: React.FC = () => {
                 headers: headers,
                 body: body,
             });
+            
+            if (res.status === 204 || res.status === 205) {
+                setResponses(prev => ({
+                    ...prev,
+                    [itemId]: {
+                        response: {
+                            status: res.status,
+                            statusText: res.statusText,
+                            headers: Object.fromEntries(res.headers.entries()),
+                            body: "Response has no content.",
+                        },
+                        testResults: []
+                    }
+                }));
+                return;
+            }
 
             const responseBody = await res.clone().json().catch(() => res.clone().text());
             
@@ -396,8 +421,39 @@ const App: React.FC = () => {
             
             const testScript = activeRequestItem?.event?.find(e => e.listen === 'test')?.script.exec.join('\n') || '';
             let testResults: TestResult[] = [];
+            
+            const currentEnvVars = activeEnvironment?.values.reduce((acc, v) => {
+                if (v.enabled && v.key) {
+                    acc[v.key] = v.value;
+                }
+                return acc;
+            }, {} as Record<string, string>) || {};
+
             if (testScript) {
-                testResults = await runTests(testScript, res, responseBody);
+                const testRunResult = await runTests(testScript, res, responseBody, currentEnvVars);
+                testResults = testRunResult.testResults;
+                const { updatedVariables } = testRunResult;
+
+                if (activeEnvironment && JSON.stringify(currentEnvVars) !== JSON.stringify(updatedVariables)) {
+                    setEnvironments(prevEnvs => 
+                        prevEnvs.map(env => {
+                            if (env.id !== activeEnvironmentId) return env;
+
+                            const newEnv = { ...env, values: [...env.values.map(v => ({...v}))] };
+                            
+                            for (const key in updatedVariables) {
+                                const existingVarIndex = newEnv.values.findIndex((v: EnvironmentValue) => v.key === key);
+
+                                if (existingVarIndex > -1) {
+                                    newEnv.values[existingVarIndex].value = updatedVariables[key];
+                                } else {
+                                    newEnv.values.push({ key, value: updatedVariables[key], enabled: true });
+                                }
+                            }
+                            return newEnv;
+                        })
+                    );
+                }
             }
 
             setResponses(prev => ({ ...prev, [itemId]: { response: responseData, testResults } }));
