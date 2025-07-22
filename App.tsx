@@ -646,6 +646,7 @@ const App: React.FC = () => {
                         }))
                     };
                     setEnvironments(prev => [...prev, newEnv]);
+                    setActiveEnvironmentId(newEnv.id); // Set newly imported environment as active
                     setIsEnvironmentModalOpen(true);
                     setImportModalOpen(false);
                     return;
@@ -735,6 +736,12 @@ const App: React.FC = () => {
     const activeResponseData = activeRequestId ? responses[activeRequestId] : null;
     const isLoading = loadingItemId === activeRequestId;
 
+    // --- Calculate active variables for highlighting ---
+    const activeEnvironment = environments.find(env => env.id === activeEnvironmentId);
+    const activeVariables = activeEnvironment
+        ? activeEnvironment.values.filter(v => v.enabled).map(v => v.key)
+        : [];
+
     const requestPanelComponent = activeRequestItem && (
         <RequestPanel
             key={activeRequestId}
@@ -746,6 +753,7 @@ const App: React.FC = () => {
             onGenerateTests={handleGenerateTests}
             layoutMode={layoutMode}
             setLayoutMode={setLayoutMode}
+            activeVariables={activeVariables}
         />
     );
 
