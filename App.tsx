@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { PostmanCollection, PostmanItem, PostmanRequest, TestResult, ResponseData } from './types';
+import { PostmanCollection, PostmanItem, PostmanRequest, TestResult, ResponseData, Environment, EnvironmentValue } from './types';
 import Layout from './components/Layout';
 import Sidebar from './components/Sidebar';
 import RequestPanel from './components/RequestPanel';
@@ -15,6 +15,7 @@ import { MenuIcon } from './components/icons';
 import ConfirmationModal from './components/ConfirmationModal';
 import ExportModal from './components/ExportModal';
 import { exportToOpenApi } from './services/openapiExporter';
+import EnvironmentModal from './components/EnvironmentModal';
 
 // --- START HELPER FUNCTIONS ---
 
@@ -47,7 +48,11 @@ const App: React.FC = () => {
     const [isConfirmDeleteModalOpen, setConfirmDeleteModalOpen] = useState(false);
     const [itemToDelete, setItemToDelete] = useState<string | null>(null);
     const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+    const [isEnvironmentModalOpen, setIsEnvironmentModalOpen] = useState(false);
 
+    // --- Environment State ---
+    const [environments, setEnvironments] = useState<Environment[]>([]);
+    const [activeEnvironmentId, setActiveEnvironmentId] = useState<string | null>(null);
 
     // --- Responsive State ---
     const [isSidebarOpen, setIsSidebarOpen] = useState(false);
@@ -90,6 +95,14 @@ const App: React.FC = () => {
         if (savedApiKey) {
             setApiKey(savedApiKey);
         }
+        const savedEnvironments = localStorage.getItem('miniPostmanEnvironments');
+        if (savedEnvironments) {
+            setEnvironments(JSON.parse(savedEnvironments));
+        }
+        const savedActiveEnvId = localStorage.getItem('miniPostmanActiveEnvId');
+        if (savedActiveEnvId) {
+            setActiveEnvironmentId(JSON.parse(savedActiveEnvId));
+        }
     }, []);
 
     useEffect(() => {
@@ -99,8 +112,6 @@ const App: React.FC = () => {
     }, [collection]);
 
      useEffect(() => {
-        // Create a new object to save, excluding the volatile `response` part,
-        // as requested by the user. Only test results are persisted.
         const responsesToSave: Record<string, { testResults: TestResult[] }> = {};
         Object.keys(responses).forEach(key => {
             if (responses[key]) {
@@ -136,10 +147,17 @@ const App: React.FC = () => {
         if (apiKey) {
             localStorage.setItem('geminiApiKey', apiKey);
         } else {
-            // If the key is cleared, remove it from storage.
             localStorage.removeItem('geminiApiKey');
         }
     }, [apiKey]);
+    
+    useEffect(() => {
+        localStorage.setItem('miniPostmanEnvironments', JSON.stringify(environments));
+    }, [environments]);
+    
+    useEffect(() => {
+        localStorage.setItem('miniPostmanActiveEnvId', JSON.stringify(activeEnvironmentId));
+    }, [activeEnvironmentId]);
     
     const findRequest = (items: PostmanItem[], id: string): PostmanItem | null => {
         for (const item of items) {
@@ -153,7 +171,7 @@ const App: React.FC = () => {
         return null;
     };
 
-    const activeRequestItem = activeRequestId && collection ? findRequest(collection.item, activeRequestId) : null;
+    const activeRequestItem = activeRequestId && collection ? findItemById(collection.item, activeRequestId) : null;
     
     // --- START RECURSIVE ITEM MANIPULATION ---
 
@@ -194,10 +212,8 @@ const App: React.FC = () => {
             };
             setCollection(newCollection);
         } else if (folderId === null) {
-            // Add to root
             setCollection({ ...collection, item: [...collection.item, newRequestItem] });
         } else {
-            // Add to specific folder
             const newItems = updateItemsRecursively(collection.item, item => {
                 if (item.id === folderId && item.item) {
                     setOpenFolders(prev => ({...prev, [folderId]: true}));
@@ -248,17 +264,13 @@ const App: React.FC = () => {
 
         const removeItemRecursively = (items: PostmanItem[], idToRemove: string): PostmanItem[] => {
             return items.reduce((acc: PostmanItem[], item) => {
-                // If the current item is the one to be removed, don't add it to the accumulator.
                 if (item.id === idToRemove) {
                     return acc;
                 }
-
-                // If the item is a folder, recursively process its children.
                 if (item.item) {
                     const updatedFolder = { ...item, item: removeItemRecursively(item.item, idToRemove) };
                     acc.push(updatedFolder);
                 } else {
-                    // If it's a request (and not the one to be removed), add it.
                     acc.push(item);
                 }
                 
@@ -268,12 +280,9 @@ const App: React.FC = () => {
 
         const newItems = removeItemRecursively(collection.item, itemToDelete);
         setCollection({ ...collection, item: newItems });
-
-        // If the deleted item was the active one, deactivate it.
         if (activeRequestId === itemToDelete) {
             handleSetActiveRequest(null);
         }
-
         setConfirmDeleteModalOpen(false);
         setItemToDelete(null);
     };
@@ -302,9 +311,21 @@ const App: React.FC = () => {
     
     // --- END RECURSIVE ITEM MANIPULATION ---
 
+    const substituteVariables = (text: string, env: Environment | null): string => {
+        if (!env || !text) return text;
+        
+        return text.replace(/\{\{(.+?)\}\}/g, (match, variableName) => {
+            const variable = env.values.find(v => v.key === variableName && v.enabled);
+            return variable ? variable.value : match;
+        });
+    };
+
     const handleSendRequest = async (item: PostmanItem, files?: Record<string, File>) => {
         const { id: itemId, request } = item;
         if (!itemId || !request) return;
+        
+        const activeEnvironment = environments.find(env => env.id === activeEnvironmentId);
+        const substitute = (str: string) => substituteVariables(str, activeEnvironment || null);
 
         const prepareUrl = (rawUrl: string): string => {
             let url = rawUrl.trim();
@@ -315,7 +336,7 @@ const App: React.FC = () => {
             return url;
         };
 
-        const rawUrl = request.url?.raw || '';
+        const rawUrl = substitute(request.url?.raw || '');
         if (!rawUrl.trim()) {
             setResponses(prev => ({ ...prev, [itemId]: { ...prev[itemId], response: { status: 'Error', body: 'Request URL is empty.' } } }));
             return;
@@ -327,7 +348,7 @@ const App: React.FC = () => {
 
         try {
             const headers = request.header?.reduce((acc, h) => {
-                if(h.key) acc[h.key] = h.value;
+                if(h.key && h.value) acc[substitute(h.key)] = substitute(h.value);
                 return acc;
             }, {} as Record<string, string>) || {};
             
@@ -335,7 +356,7 @@ const App: React.FC = () => {
 
             if (request.method !== 'GET' && request.method !== 'HEAD' && request.body) {
                 if (request.body.mode === 'raw') {
-                    body = request.body.raw || '';
+                    body = substitute(request.body.raw || '');
                     if (body) {
                         const hasContentType = Object.keys(headers).some(k => k.toLowerCase() === 'content-type');
                         if (!hasContentType) {
@@ -349,7 +370,7 @@ const App: React.FC = () => {
                         if (param.type === 'file' && files?.[param.key]) {
                             formData.append(param.key, files[param.key]);
                         } else if (param.type === 'text') {
-                            formData.append(param.key, param.value);
+                            formData.append(param.key, substitute(param.value));
                         }
                     });
                     body = formData;
@@ -401,18 +422,16 @@ const App: React.FC = () => {
             }));
         } finally {
             setLoadingItemId(null);
-            setMainView('response'); // Switch to response view on mobile
+            setMainView('response');
         }
     };
 
     const handleGenerateTests = async (itemToUpdate: PostmanItem, responseData: any) => {
         if (!itemToUpdate.id || !itemToUpdate.request) return;
-
         if (!apiKey) {
             setApiKeyModalOpen(true);
             return;
         }
-
         if (!responseData || !responseData.body || responseData.status === 'Error') {
             setErrorModalOpen(true);
             return;
@@ -421,9 +440,7 @@ const App: React.FC = () => {
         setLoadingItemId(itemToUpdate.id);
         try {
             const { testScript } = await generateTestsForRequest(itemToUpdate.request, responseData, apiKey);
-
             const updatedItem = { ...itemToUpdate };
-
             let testEvent = updatedItem.event?.find(e => e.listen === 'test');
             if (testEvent) {
                 testEvent.script.exec = testScript.split('\n');
@@ -433,14 +450,10 @@ const App: React.FC = () => {
                 }
                 updatedItem.event.push({
                     listen: 'test',
-                    script: {
-                        type: 'text/javascript',
-                        exec: testScript.split('\n'),
-                    },
+                    script: { type: 'text/javascript', exec: testScript.split('\n') },
                 });
             }
             handleUpdateItem(updatedItem);
-            
         } catch (error) {
             console.error("Failed to generate tests:", error);
             alert(`Failed to generate tests. ${error instanceof Error ? error.message : "Check the console for details."}`);
@@ -453,48 +466,35 @@ const App: React.FC = () => {
     
     const getAllDescendantIds = useCallback((items: PostmanItem[], parentId: string): string[] => {
         const parentItem = findItemById(items, parentId);
-        if (!parentItem || !parentItem.item) {
-            return [];
-        }
-
+        if (!parentItem || !parentItem.item) return [];
         let ids: string[] = [];
         const queue = [...parentItem.item];
         while (queue.length > 0) {
             const current = queue.shift()!;
             ids.push(current.id!);
-            if (current.item) {
-                queue.push(...current.item);
-            }
+            if (current.item) queue.push(...current.item);
         }
         return ids;
     }, []);
 
     const handleSelectionChange = useCallback((itemId: string, isSelected: boolean) => {
         if (!collection) return;
-        
         const descendantIds = getAllDescendantIds(collection.item, itemId);
         const idsToChange = [itemId, ...descendantIds];
-
         setSelectedIds(prev => {
             const newSet = new Set(prev);
-            if (isSelected) {
-                idsToChange.forEach(id => newSet.add(id));
-            } else {
-                idsToChange.forEach(id => newSet.delete(id));
-            }
+            if (isSelected) idsToChange.forEach(id => newSet.add(id));
+            else idsToChange.forEach(id => newSet.delete(id));
             return newSet;
         });
     }, [collection, getAllDescendantIds]);
 
     const buildSelectedTree = (items: PostmanItem[], selectedIds: Set<string>): PostmanItem[] => {
         const result: PostmanItem[] = [];
-
         for (const item of items) {
-            if (item.request) { // It's a request
-                if (selectedIds.has(item.id!)) {
-                    result.push(item);
-                }
-            } else if (item.item) { // It's a folder
+            if (item.request) {
+                if (selectedIds.has(item.id!)) result.push(item);
+            } else if (item.item) {
                 const selectedChildren = buildSelectedTree(item.item, selectedIds);
                 if (selectedIds.has(item.id!) || selectedChildren.length > 0) {
                     result.push({ ...item, item: selectedChildren });
@@ -511,10 +511,8 @@ const App: React.FC = () => {
 
     const handleConfirmExport = (format: 'postman' | 'openapi') => {
         if (!collection) return;
-
         let itemsToProcess: PostmanItem[];
         let exportName: string;
-
         if (selectedIds.size > 0) {
             itemsToProcess = buildSelectedTree(collection.item, selectedIds);
             exportName = `${collection.info.name} (Selection)`;
@@ -522,27 +520,20 @@ const App: React.FC = () => {
             itemsToProcess = collection.item;
             exportName = collection.info.name;
         }
-
         let fileContent: string;
         let fileName: string;
-
         if (format === 'openapi') {
             const openApiSpec = exportToOpenApi(exportName, itemsToProcess);
             fileContent = JSON.stringify(openApiSpec, null, 2);
             fileName = `${exportName.replace(/\s/g, '_')}_openapi.json`;
-        } else { // postman
+        } else {
             const collectionToExport = {
-                info: {
-                    _postman_id: crypto.randomUUID(),
-                    name: exportName,
-                    schema: 'https://schema.getpostman.com/json/collection/v2.1.0/collection.json'
-                },
+                info: { _postman_id: crypto.randomUUID(), name: exportName, schema: 'https://schema.getpostman.com/json/collection/v2.1.0/collection.json' },
                 item: itemsToProcess
             };
             fileContent = JSON.stringify(collectionToExport, null, 2);
             fileName = `${exportName.replace(/\s/g, '_')}_collection.json`;
         }
-
         const blob = new Blob([fileContent], { type: 'application/json' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
@@ -552,111 +543,56 @@ const App: React.FC = () => {
         a.click();
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
-
         setExportModalOpen(false);
     };
 
     const parseCurlCommand = (curlCommand: string): Partial<PostmanRequest> & { url: { raw: string } } => {
-        // Updated regex to better handle single-quoted multi-line data.
-        // The regex splits by space but respects quotes.
         const tokens = curlCommand.replace(/\\\n/g, ' ').match(/(?:[^\s"']+|"[^"]*"|'[^']*')/g) || [];
-    
-        const request: Partial<PostmanRequest> & { url: { raw: string } } = {
-            method: 'GET',
-            url: { raw: '' },
-            header: [],
-            body: { mode: 'raw', raw: '' }
-        };
-    
+        const request: Partial<PostmanRequest> & { url: { raw: string } } = { method: 'GET', url: { raw: '' }, header: [], body: { mode: 'raw', raw: '' } };
         let i = 0;
         while (i < tokens.length) {
             const token = tokens[i];
             const unquote = (t: string) => t.startsWith("'") && t.endsWith("'") || t.startsWith('"') && t.endsWith('"') ? t.slice(1, -1) : t;
-    
             switch (token) {
                 case 'curl':
-                    // Look for the URL immediately after `curl` if it's not a flag
                     if (tokens[i + 1] && !tokens[i + 1].startsWith('-')) {
-                        request.url.raw = unquote(tokens[i + 1]);
-                        i++; 
+                        request.url.raw = unquote(tokens[i + 1]); i++; 
                     }
                     break;
-                
                 case '--location':
-                    // The next token is expected to be the URL.
-                    if (tokens[i + 1] && !tokens[i + 1].startsWith('-')) {
-                        request.url.raw = unquote(tokens[++i]);
-                    }
+                    if (tokens[i + 1] && !tokens[i + 1].startsWith('-')) request.url.raw = unquote(tokens[++i]);
                     break;
-
-                case '-X':
-                case '--request':
+                case '-X': case '--request':
                     request.method = unquote(tokens[++i]).toUpperCase() as PostmanRequest['method'];
                     break;
-
-                case '-H':
-                case '--header':
-                    const headerLine = unquote(tokens[++i]);
-                    const separatorIndexHeader = headerLine.indexOf(':');
+                case '-H': case '--header':
+                    const headerLine = unquote(tokens[++i]); const separatorIndexHeader = headerLine.indexOf(':');
                     if (separatorIndexHeader !== -1) {
-                        const key = headerLine.substring(0, separatorIndexHeader).trim();
-                        const value = headerLine.substring(separatorIndexHeader + 1).trim();
-                        if (key) {
-                            request.header?.push({ key, value, type: 'text' });
-                        }
+                        const key = headerLine.substring(0, separatorIndexHeader).trim(); const value = headerLine.substring(separatorIndexHeader + 1).trim();
+                        if (key) request.header?.push({ key, value, type: 'text' });
                     }
                     break;
-
-                case '--data':
-                case '--data-raw':
-                case '-d':
-                    if (request.body) {
-                        request.body.mode = 'raw';
-                        request.body.raw = unquote(tokens[++i]);
-                    }
-                    if (request.method === 'GET') {
-                        request.method = 'POST';
-                    }
+                case '--data': case '--data-raw': case '-d':
+                    if (request.body) { request.body.mode = 'raw'; request.body.raw = unquote(tokens[++i]); }
+                    if (request.method === 'GET') request.method = 'POST';
                     break;
-                
                 case '--form':
-                    const formArg = unquote(tokens[++i]);
-                    const separatorIndexForm = formArg.indexOf('=');
-                    
+                    const formArg = unquote(tokens[++i]); const separatorIndexForm = formArg.indexOf('=');
                     if (separatorIndexForm !== -1) {
-                        const key = formArg.substring(0, separatorIndexForm).trim();
-                        let value = formArg.substring(separatorIndexForm + 1);
-                        
-                        // Set body mode to formdata
-                        if (request.body?.mode !== 'formdata') {
-                            request.body = { mode: 'formdata', formdata: [] };
-                        }
-                        
-                        // Ensure formdata is initialized
-                        if (!request.body.formdata) {
-                            request.body.formdata = [];
-                        }
-
+                        const key = formArg.substring(0, separatorIndexForm).trim(); let value = formArg.substring(separatorIndexForm + 1);
+                        if (request.body?.mode !== 'formdata') request.body = { mode: 'formdata', formdata: [] };
+                        if (!request.body.formdata) request.body.formdata = [];
                         if (value.startsWith('@')) {
-                            // It's a file
                             const filePath = unquote(value.substring(1));
                             request.body.formdata.push({ key, value: filePath, type: 'file' });
                         } else {
-                            // It's a text value
                             request.body.formdata.push({ key, value: unquote(value), type: 'text' });
                         }
-
-                        if (request.method === 'GET') {
-                            request.method = 'POST';
-                        }
+                        if (request.method === 'GET') request.method = 'POST';
                     }
                     break;
-
                 default:
-                    // Fallback for URL if it wasn't caught earlier
-                    if (!request.url.raw && token.startsWith('http')) {
-                         request.url.raw = unquote(token);
-                    }
+                    if (!request.url.raw && token.startsWith('http')) request.url.raw = unquote(token);
                     break;
             }
             i++;
@@ -666,88 +602,67 @@ const App: React.FC = () => {
     
     const handleImportFromCurl = (curlString: string) => {
         const parsed = parseCurlCommand(curlString);
-        if (!parsed.url?.raw) {
-            throw new Error('Could not parse URL from cURL command.');
-        }
-
+        if (!parsed.url?.raw) throw new Error('Could not parse URL from cURL command.');
         const newRequestId = crypto.randomUUID();
         const newRequestItem: PostmanItem = {
             id: newRequestId,
             name: `cURL Import - ${new URL(parsed.url.raw).hostname}`,
             request: {
-                id: newRequestId,
-                method: parsed.method || 'GET',
-                header: parsed.header || [],
-                body: parsed.body || { mode: 'raw', raw: '' },
-                url: { raw: parsed.url.raw },
+                id: newRequestId, method: parsed.method || 'GET', header: parsed.header || [],
+                body: parsed.body || { mode: 'raw', raw: '' }, url: { raw: parsed.url.raw },
             },
         };
-        
-        if (collection) {
-            // Add to existing collection
-            setCollection({ ...collection, item: [...collection.item, newRequestItem] });
-        } else {
-            // Create a new collection
+        if (collection) setCollection({ ...collection, item: [...collection.item, newRequestItem] });
+        else {
             const newCollection: PostmanCollection = {
-                info: {
-                    _postman_id: crypto.randomUUID(),
-                    name: 'My QA Workspace',
-                    schema: 'https://schema.getpostman.com/json/collection/v2.1.0/collection.json',
-                },
+                info: { _postman_id: crypto.randomUUID(), name: 'My QA Workspace', schema: 'https://schema.getpostman.com/json/collection/v2.1.0/collection.json', },
                 item: [newRequestItem],
-            };
-            setCollection(newCollection);
+            }; setCollection(newCollection);
         }
         handleSetActiveRequest(newRequestId);
     };
     
     const handleImportText = (text: string) => {
         try {
-            let data;
-            let importedCollection: PostmanCollection | null = null;
-            let isNewCollection = false;
-    
-            // Try parsing as JSON (Postman Collection or OpenAPI)
+            let data; let importedCollection: PostmanCollection | null = null; let isNewCollection = false;
             try {
                 data = JSON.parse(text);
-                if (data.openapi || data.swagger) {
-                    importedCollection = parseOpenApi(data);
-                    isNewCollection = true;
-                } else if (data.info && data.item) {
+                if (data.openapi || data.swagger) { importedCollection = parseOpenApi(data); isNewCollection = true; }
+                else if (data.info && data.item) {
                      const assignIds = (items: PostmanItem[]): PostmanItem[] => items.map(item => ({
-                        ...item,
-                        id: item.id || crypto.randomUUID(),
+                        ...item, id: item.id || crypto.randomUUID(),
                         item: item.item ? assignIds(item.item) : undefined,
                         request: item.request ? { ...item.request, id: item.request.id || crypto.randomUUID() } : undefined
                     }));
-                    importedCollection = { ...data, item: assignIds(data.item) };
-                    isNewCollection = true;
+                    importedCollection = { ...data, item: assignIds(data.item) }; isNewCollection = true;
+                } else if (data.name && Array.isArray(data.values) && data._postman_variable_scope === 'environment') {
+                    const newEnv: Environment = {
+                        id: data.id || crypto.randomUUID(),
+                        name: data.name,
+                        values: (data.values || []).map((v: any) => ({
+                            key: v.key || '',
+                            value: v.value || '',
+                            enabled: v.enabled !== false,
+                        }))
+                    };
+                    setEnvironments(prev => [...prev, newEnv]);
+                    setIsEnvironmentModalOpen(true);
+                    setImportModalOpen(false);
+                    return;
                 }
-            } catch (e) { /* ignore json parse error, try yaml */ }
-            
-            // Try parsing as YAML (OpenAPI)
+            } catch (e) { /* ignore */ }
             if (!importedCollection) {
                 try {
                     data = yaml.load(text);
-                    if (data && typeof data === 'object' && (data.openapi || data.swagger)) {
-                        importedCollection = parseOpenApi(data);
-                        isNewCollection = true;
-                    }
-                } catch (e) { /* ignore yaml parse error, try curl */ }
+                    if (data && typeof data === 'object' && (data.openapi || data.swagger)) { importedCollection = parseOpenApi(data); isNewCollection = true; }
+                } catch (e) { /* ignore */ }
             }
-            
-            // Handle collection import (Postman or OpenAPI)
             if (importedCollection && isNewCollection) {
                 const newFolder: PostmanItem = {
-                    id: importedCollection.info._postman_id || crypto.randomUUID(),
-                    name: importedCollection.info.name,
-                    item: importedCollection.item,
+                    id: importedCollection.info._postman_id || crypto.randomUUID(), name: importedCollection.info.name, item: importedCollection.item,
                 };
-                if (collection) {
-                    // Add imported collection as a new folder
-                    setCollection({ ...collection, item: [...collection.item, newFolder] });
-                } else {
-                    // Set as the new base collection, but still wrap it to be safe
+                if (collection) setCollection({ ...collection, item: [...collection.item, newFolder] });
+                else {
                     const newCollection: PostmanCollection = {
                          info: { _postman_id: crypto.randomUUID(), name: 'My QA Workspace', schema: 'https://schema.getpostman.com/json/collection/v2.1.0/collection.json' },
                          item: [newFolder]
@@ -758,11 +673,8 @@ const App: React.FC = () => {
                 setImportModalOpen(false);
                 return;
             }
-    
-            // Fallback to cURL
             handleImportFromCurl(text);
             setImportModalOpen(false);
-    
         } catch (error) {
             console.error("Import failed:", error);
             alert(`Failed to import. The format might be unsupported or the content may be invalid. Error: ${error instanceof Error ? error.message : String(error)}`);
@@ -773,14 +685,9 @@ const App: React.FC = () => {
     const handleFileImport = (file: File) => {
         const reader = new FileReader();
         reader.onload = (e) => {
-            const text = e.target?.result as string;
-            if (text) {
-                handleImportText(text);
-            }
+            const text = e.target?.result as string; if (text) handleImportText(text);
         };
-        reader.onerror = () => {
-             alert('Failed to read the file.');
-        };
+        reader.onerror = () => alert('Failed to read the file.');
         reader.readAsText(file);
     };
 
@@ -869,6 +776,10 @@ const App: React.FC = () => {
                         setOpenFolders={setOpenFolders}
                         selectedIds={selectedIds}
                         onSelectionChange={handleSelectionChange}
+                        environments={environments}
+                        activeEnvironmentId={activeEnvironmentId}
+                        setActiveEnvironmentId={setActiveEnvironmentId}
+                        onOpenEnvironmentModal={() => setIsEnvironmentModalOpen(true)}
                     />
                 }
                 sidebarWidth={sidebarWidth}
@@ -997,6 +908,12 @@ const App: React.FC = () => {
             >
                 <p>¿Estás seguro de que quieres eliminar este elemento? Esta acción no se puede deshacer.</p>
             </ConfirmationModal>
+            <EnvironmentModal 
+                isOpen={isEnvironmentModalOpen}
+                onClose={() => setIsEnvironmentModalOpen(false)}
+                environments={environments}
+                onUpdateEnvironments={setEnvironments}
+            />
         </>
     );
 };
