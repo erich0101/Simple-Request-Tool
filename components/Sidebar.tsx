@@ -1,6 +1,6 @@
 import React, { useRef, useState, useEffect } from 'react';
-import { PostmanCollection, PostmanItem } from '../types';
-import { FolderIcon, ImportIcon, ExportIcon, PlusIcon, ChevronDownIcon, ChevronRightIcon, PencilIcon, TrashIcon, FolderPlusIcon, KeyIcon, LinkedInIcon, GitHubIcon } from './icons';
+import { PostmanCollection, PostmanItem, Environment } from '../types';
+import { FolderIcon, ImportIcon, ExportIcon, PlusIcon, ChevronDownIcon, ChevronRightIcon, PencilIcon, TrashIcon, FolderPlusIcon, KeyIcon, LinkedInIcon, GitHubIcon, GlobeIcon } from './icons';
 
 interface SidebarProps {
     collection: PostmanCollection | null;
@@ -17,6 +17,10 @@ interface SidebarProps {
     setOpenFolders: React.Dispatch<React.SetStateAction<Record<string, boolean>>>;
     selectedIds: Set<string>;
     onSelectionChange: (itemId: string, isSelected: boolean) => void;
+    environments: Environment[];
+    activeEnvironmentId: string | null;
+    setActiveEnvironmentId: (id: string | null) => void;
+    onOpenEnvironmentModal: () => void;
 }
 
 const getMethodClass = (method?: string) => {
@@ -31,7 +35,7 @@ const getMethodClass = (method?: string) => {
 }
 
 const Sidebar: React.FC<SidebarProps> = (props) => {
-    const { collection, activeRequestId, setActiveRequestId, onRenameItem, onOpenImportModal, onNewRequest, onNewFolder, onDeleteItem, onExport, openFolders, setOpenFolders, onOpenApiKeyModal, selectedIds, onSelectionChange } = props;
+    const { collection, activeRequestId, setActiveRequestId, onRenameItem, onOpenImportModal, onNewRequest, onNewFolder, onDeleteItem, onExport, openFolders, setOpenFolders, onOpenApiKeyModal, selectedIds, onSelectionChange, environments, activeEnvironmentId, setActiveEnvironmentId, onOpenEnvironmentModal } = props;
     
     const [editingId, setEditingId] = useState<string | null>(null);
     const [editingName, setEditingName] = useState('');
@@ -63,8 +67,9 @@ const Sidebar: React.FC<SidebarProps> = (props) => {
             <div
                 key={item.id}
                 style={{ paddingLeft: `${depth * 0.75}rem` }}
+                className="relative"
             >
-                <div className={`relative flex items-center p-2 rounded cursor-pointer hover:bg-gray-700/50 w-full group`}>
+                <div className={`flex items-center p-2 rounded cursor-pointer hover:bg-gray-700/50 w-full group`}>
                      <input
                         type="checkbox"
                         checked={selectedIds.has(item.id!)}
@@ -77,7 +82,7 @@ const Sidebar: React.FC<SidebarProps> = (props) => {
                         title="Select for export"
                     />
 
-                    {/* Item Content now takes full width */}
+                    {/* Item Content */}
                     <div className="flex items-center flex-1 min-w-0" onClick={() => isFolder ? setOpenFolders(p => ({...p, [item.id!]: !p[item.id!]})) : setActiveRequestId(item.id!)}>
                         {isFolder ? (
                             openFolders[item.id!] ? <ChevronDownIcon className="w-4 h-4 mr-1 flex-shrink-0" /> : <ChevronRightIcon className="w-4 h-4 mr-1 flex-shrink-0" />
@@ -106,28 +111,25 @@ const Sidebar: React.FC<SidebarProps> = (props) => {
                             <span className={`truncate ${item.id === activeRequestId && !isFolder ? 'text-blue-400' : ''}`} onDoubleClick={() => handleStartEditing(item)}>{item.name}</span>
                         )}
                     </div>
-                    
-                    {/* Hover controls are now absolutely positioned */}
-                    {editingId !== item.id &&
-                        <div className="absolute right-1 top-1/2 -translate-y-1/2 flex items-center space-x-0.5 p-1 bg-gray-800 border border-gray-700 rounded-md shadow-lg opacity-0 group-hover:opacity-100 transition-opacity">
-                            <button title="Renombrar" onClick={(e) => { e.stopPropagation(); handleStartEditing(item); }} className="p-1 rounded hover:bg-gray-600">
-                               <PencilIcon className="w-4 h-4 text-gray-400 hover:text-white" />
+                    {/* Hover controls */}
+                    <div className="flex items-center space-x-1 pl-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <button title="Renombrar" onClick={(e) => { e.stopPropagation(); handleStartEditing(item); }} className="p-1 rounded hover:bg-gray-600">
+                           <PencilIcon className="w-4 h-4 text-gray-400 hover:text-white" />
+                        </button>
+                        {isFolder && (
+                            <button title="Nueva Request" onClick={(e) => { e.stopPropagation(); onNewRequest(item.id!); }} className="p-1 rounded hover:bg-gray-600">
+                                <PlusIcon className="w-4 h-4 text-gray-400 hover:text-white" />
                             </button>
-                            {isFolder && (
-                                <button title="Nueva Request" onClick={(e) => { e.stopPropagation(); onNewRequest(item.id!); }} className="p-1 rounded hover:bg-gray-600">
-                                    <PlusIcon className="w-4 h-4 text-gray-400 hover:text-white" />
-                                </button>
-                            )}
-                            {isFolder && (
-                                <button title="Nueva Carpeta" onClick={(e) => { e.stopPropagation(); onNewFolder(item.id!); }} className="p-1 rounded hover:bg-gray-600">
-                                    <FolderPlusIcon className="w-4 h-4 text-gray-400 hover:text-white" />
-                                </button>
-                            )}
-                            <button title="Borrar" onClick={(e) => { e.stopPropagation(); onDeleteItem(item.id!); }} className="p-1 rounded hover:bg-gray-600">
-                               <TrashIcon className="w-4 h-4 text-gray-400 hover:text-red-500" />
+                        )}
+                        {isFolder && (
+                            <button title="Nueva Carpeta" onClick={(e) => { e.stopPropagation(); onNewFolder(item.id!); }} className="p-1 rounded hover:bg-gray-600">
+                                <FolderPlusIcon className="w-4 h-4 text-gray-400 hover:text-white" />
                             </button>
-                        </div>
-                    }
+                        )}
+                        <button title="Borrar" onClick={(e) => { e.stopPropagation(); onDeleteItem(item.id!); }} className="p-1 rounded hover:bg-gray-600">
+                           <TrashIcon className="w-4 h-4 text-gray-400 hover:text-red-500" />
+                        </button>
+                    </div>
                 </div>
 
                 {isFolder && openFolders[item.id!] && item.item && (
@@ -140,6 +142,29 @@ const Sidebar: React.FC<SidebarProps> = (props) => {
     return (
         <div className="p-4 h-full flex flex-col">
             <h1 className="text-xl font-bold mb-4">Simple Request Tool</h1>
+            
+            <div className="mb-4 p-3 bg-gray-900/50 rounded-lg">
+                <div className="flex items-center space-x-2">
+                    <GlobeIcon className="w-5 h-5 text-gray-400 flex-shrink-0"/>
+                    <select
+                        value={activeEnvironmentId || 'none'}
+                        onChange={(e) => setActiveEnvironmentId(e.target.value === 'none' ? null : e.target.value)}
+                        className="flex-1 bg-gray-700 border border-gray-600 rounded px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 min-w-0"
+                    >
+                        <option value="none">Sin Entorno</option>
+                        {environments.map(env => (
+                            <option key={env.id} value={env.id}>{env.name}</option>
+                        ))}
+                    </select>
+                    <button 
+                        onClick={onOpenEnvironmentModal}
+                        className="p-2 bg-gray-700 hover:bg-gray-600 rounded text-sm" title="Administrar Entornos"
+                    >
+                        <PencilIcon className="w-4 h-4"/>
+                    </button>
+                </div>
+            </div>
+
             <p className="mb-1">QA-Testing</p>
             <div className="flex space-x-2 mb-4">
                  <button onClick={() => onNewRequest(null)} className="p-2 bg-gray-700 hover:bg-gray-600 rounded text-sm" title="Nueva Request">
