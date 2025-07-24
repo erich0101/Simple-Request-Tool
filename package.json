@@ -17,7 +17,8 @@
     "@codemirror/lang-json": "^6.0.2",
     "@uiw/codemirror-theme-okaidia": "^4.24.1",
     "@codemirror/view": "^6.28.0",
-    "js-yaml": "^4.1.0"
+    "js-yaml": "^4.1.0",
+    "@codemirror/state": "^6.5.2"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",
