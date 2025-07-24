@@ -76,18 +76,18 @@ const JsonNode: React.FC<JsonNodeProps> = ({ data, nodeKey, depth, isParentArray
                     )}
                     {renderValue()}
                 </div>
-                <button
+                 <button
                     onClick={(e) => {
                         e.stopPropagation();
                         handleCopy();
                     }}
-                    className="flex-shrink-0 p-2 rounded-md text-gray-300 bg-gray-700 hover:text-white hover:bg-gray-600 focus:outline-none focus:ring-1 focus:ring-blue-500 transition-colors"
+                    className="flex-shrink-0 p-2 rounded-md text-gray-300 hover:text-white hover:bg-gray-600 focus:outline-none focus:ring-1 focus:ring-blue-500 transition-colors"
                     title="Copy value"
                 >
                     {copied ? (
                         <CheckCircleIcon className="w-5 h-5 text-green-500" />
                     ) : (
-                        <CopyIcon className="w-5 h-5 text-white" />
+                        <CopyIcon className="w-5 h-5" />
                     )}
                 </button>
             </div>
