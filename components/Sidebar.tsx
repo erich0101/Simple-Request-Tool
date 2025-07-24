@@ -4,7 +4,7 @@
 
 import React, { useRef, useState, useEffect } from 'react';
 import { PostmanCollection, PostmanItem, Environment } from '../types';
-import { FolderIcon, ImportIcon, ExportIcon, PlusIcon, ChevronDownIcon, ChevronRightIcon, PencilIcon, TrashIcon, FolderPlusIcon, KeyIcon, LinkedInIcon, GitHubIcon, GlobeIcon } from './icons';
+import { FolderIcon, ImportIcon, ExportIcon, PlusIcon, ChevronDownIcon, ChevronRightIcon, PencilIcon, TrashIcon, FolderPlusIcon, KeyIcon, LinkedInIcon, GitHubIcon, GlobeIcon, CodeIcon } from './icons';
 
 interface SidebarProps {
     collection: PostmanCollection | null;
@@ -17,6 +17,7 @@ interface SidebarProps {
     onNewFolder: (parentId: string | null) => void;
     onDeleteItem: (itemId: string) => void;
     onExport: () => void;
+    onCopyAsCurl: (itemId: string) => void;
     openFolders: Record<string, boolean>;
     setOpenFolders: React.Dispatch<React.SetStateAction<Record<string, boolean>>>;
     selectedIds: Set<string>;
@@ -39,7 +40,7 @@ const getMethodClass = (method?: string) => {
 }
 
 const Sidebar: React.FC<SidebarProps> = (props) => {
-    const { collection, activeRequestId, setActiveRequestId, onRenameItem, onOpenImportModal, onNewRequest, onNewFolder, onDeleteItem, onExport, openFolders, setOpenFolders, onOpenApiKeyModal, selectedIds, onSelectionChange, environments, activeEnvironmentId, setActiveEnvironmentId, onOpenEnvironmentModal } = props;
+    const { collection, activeRequestId, setActiveRequestId, onRenameItem, onOpenImportModal, onNewRequest, onNewFolder, onDeleteItem, onExport, onCopyAsCurl, openFolders, setOpenFolders, onOpenApiKeyModal, selectedIds, onSelectionChange, environments, activeEnvironmentId, setActiveEnvironmentId, onOpenEnvironmentModal } = props;
     
     const [editingId, setEditingId] = useState<string | null>(null);
     const [editingName, setEditingName] = useState('');
@@ -117,6 +118,11 @@ const Sidebar: React.FC<SidebarProps> = (props) => {
                     </div>
                     {/* Hover controls */}
                     <div className="flex items-center space-x-1 pl-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                        {!isFolder && (
+                            <button title="Copiar como cURL" onClick={(e) => { e.stopPropagation(); onCopyAsCurl(item.id!); }} className="p-1 rounded hover:bg-gray-600">
+                               <CodeIcon className="w-4 h-4 text-gray-400 hover:text-white" />
+                            </button>
+                        )}
                         <button title="Renombrar" onClick={(e) => { e.stopPropagation(); handleStartEditing(item); }} className="p-1 rounded hover:bg-gray-600">
                            <PencilIcon className="w-4 h-4 text-gray-400 hover:text-white" />
                         </button>
