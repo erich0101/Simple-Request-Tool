@@ -202,7 +202,7 @@ const Sidebar: React.FC<SidebarProps> = (props) => {
                 <button onClick={onOpenApiKeyModal} className="w-full flex items-center justify-center p-2 bg-gray-700 hover:bg-gray-600 rounded text-sm mb-2" title="Ingresa tu Gemini API Key">
                     <KeyIcon className="w-4 h-4 mr-2"/> Set API Key
                 </button>
-                <p className="mb-1 text-yellow-500">Ver: 0.0.1 alpha</p>
+                <p className="mb-1 text-yellow-500">Ver: 0.1.0-alpha</p>
                 <div className="flex items-center justify-between">
                     <p className="text-gray-400" style={{ fontSize: '16px' }}>By Erich Petrocelli</p>
                     <div className="flex items-center space-x-3">
