@@ -14,6 +14,7 @@ interface RequestPanelProps {
     onGenerateTests: (item: PostmanItem, response: any) => void;
     layoutMode: 'horizontal' | 'vertical';
     setLayoutMode: (mode: 'horizontal' | 'vertical') => void;
+    activeVariables?: string[];
 }
 
 type Tab = 'Headers' | 'Body' | 'Tests';
@@ -29,7 +30,7 @@ const KeyValueInput: React.FC<{
 );
 
 
-const RequestPanel: React.FC<RequestPanelProps> = ({ item, response, loading, onSend, onUpdateItem, onGenerateTests, layoutMode, setLayoutMode }) => {
+const RequestPanel: React.FC<RequestPanelProps> = ({ item, response, loading, onSend, onUpdateItem, onGenerateTests, layoutMode, setLayoutMode, activeVariables }) => {
     const [activeTab, setActiveTab] = useState<Tab>('Body');
     const [currentItem, setCurrentItem] = useState<PostmanItem>(item);
     const [formFiles, setFormFiles] = useState<Record<string, File>>({});
@@ -71,8 +72,8 @@ const RequestPanel: React.FC<RequestPanelProps> = ({ item, response, loading, on
         updateAndPropagate({ ...currentItem, request: newRequest });
     };
 
-    const handleUrlChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-        modifyRequest(req => ({ ...req, url: { ...(req.url || { raw: '' }), raw: e.target.value } }));
+    const handleUrlChange = (newUrl: string) => {
+        modifyRequest(req => ({ ...req, url: { ...(req.url || { raw: '' }), raw: newUrl } }));
     };
 
     const handleMethodChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
@@ -214,7 +215,7 @@ const RequestPanel: React.FC<RequestPanelProps> = ({ item, response, loading, on
                                 </button>
                              )}
                         </div>
-                        {bodyMode === 'raw' && <CodeEditor key={bodyEditorKey} value={request.body?.raw || ''} onChange={handleBodyChange} language="json"/>}
+                        {bodyMode === 'raw' && <CodeEditor key={bodyEditorKey} value={request.body?.raw || ''} onChange={handleBodyChange} language="json" activeVariables={activeVariables} />}
                         {bodyMode === 'formdata' && (
                             <div className="p-4 overflow-y-auto flex-1">
                                 {(request.body?.formdata || []).map((p, i) => (
@@ -251,7 +252,15 @@ const RequestPanel: React.FC<RequestPanelProps> = ({ item, response, loading, on
                     <select value={currentItem.request?.method} onChange={handleMethodChange} className="bg-gray-900 border border-gray-600 rounded px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500 font-bold">
                         {['GET', 'POST', 'PUT', 'PATCH', 'DELETE'].map(m => <option key={m} value={m}>{m}</option>)}
                     </select>
-                    <input type="text" value={currentItem.request?.url?.raw || ''} onChange={handleUrlChange} className="flex-1 bg-gray-900 border border-gray-600 rounded px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="Enter request URL"/>
+                    <div className="flex-1 min-w-0">
+                        <CodeEditor
+                            value={currentItem.request?.url?.raw || ''}
+                            onChange={handleUrlChange}
+                            language="text"
+                            singleLine={true}
+                            activeVariables={activeVariables}
+                        />
+                    </div>
                     <button onClick={() => onSend(currentItem, formFiles)} disabled={loading} className="px-4 py-1.5 bg-blue-600 hover:bg-blue-500 rounded text-white font-semibold disabled:bg-blue-800 disabled:cursor-wait">
                         {loading ? 'Sending...' : 'Send'}
                     </button>
@@ -292,7 +301,15 @@ const RequestPanel: React.FC<RequestPanelProps> = ({ item, response, loading, on
                     <select value={currentItem.request?.method} onChange={handleMethodChange} className="bg-gray-700 border border-gray-600 rounded px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500 font-bold text-sm">
                         {['GET', 'POST', 'PUT', 'PATCH', 'DELETE'].map(m => <option key={m} value={m}>{m}</option>)}
                     </select>
-                    <input type="text" value={currentItem.request?.url?.raw || ''} onChange={handleUrlChange} className="flex-1 bg-gray-700 border border-gray-600 rounded px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm" placeholder="Enter request URL"/>
+                    <div className="flex-1 min-w-0">
+                        <CodeEditor
+                            value={currentItem.request?.url?.raw || ''}
+                            onChange={handleUrlChange}
+                            language="text"
+                            singleLine={true}
+                            activeVariables={activeVariables}
+                        />
+                    </div>
                  </div>
                  <button onClick={() => onSend(currentItem, formFiles)} disabled={loading} className="mt-2 w-full px-4 py-1.5 bg-blue-600 hover:bg-blue-500 rounded text-white font-semibold disabled:bg-blue-800 disabled:cursor-wait">
                     {loading ? 'Sending...' : 'Send'}
