@@ -53,6 +53,9 @@ export interface TestResult {
 export interface ResponseData {
     response: any;
     testResults: TestResult[];
+    requestHeaders?: Record<string, string>;
+    requestTimestamp?: number;
+    responseTime?: number;
 }
 
 export interface Environment {
