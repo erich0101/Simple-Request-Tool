@@ -7,10 +7,21 @@ interface ModalProps {
     onClose: () => void;
     title: string;
     children: React.ReactNode;
+    maxWidth?: 'md' | 'lg' | 'xl' | '2xl' | '3xl' | '4xl' | '5xl';
 }
 
-const Modal: React.FC<ModalProps> = ({ isOpen, onClose, title, children }) => {
+const Modal: React.FC<ModalProps> = ({ isOpen, onClose, title, children, maxWidth = 'md' }) => {
     if (!isOpen) return null;
+
+    const maxWidthClasses = {
+        'md': 'max-w-md',
+        'lg': 'max-w-lg',
+        'xl': 'max-w-xl',
+        '2xl': 'max-w-2xl',
+        '3xl': 'max-w-3xl',
+        '4xl': 'max-w-4xl',
+        '5xl': 'max-w-5xl',
+    };
 
     return (
         <div 
@@ -18,7 +29,7 @@ const Modal: React.FC<ModalProps> = ({ isOpen, onClose, title, children }) => {
             onClick={onClose}
         >
             <div 
-                className="bg-gray-800 rounded-lg shadow-xl p-6 w-full max-w-md mx-4 transform transition-all"
+                className={`bg-gray-800 rounded-lg shadow-xl p-6 w-full ${maxWidthClasses[maxWidth]} mx-4 transform transition-all`}
                 onClick={e => e.stopPropagation()} // Prevent closing when clicking inside modal
             >
                 <div className="flex justify-between items-center border-b border-gray-700 pb-3 mb-4">
