@@ -1,23 +1,26 @@
 
 import React, { useState, useEffect } from 'react';
-import { TestResult } from '../types';
+import { ResponseData } from '../types';
 import CodeEditor from './CodeEditor';
 import JsonTreeView from './JsonTreeView';
-import { CheckCircleIcon, XCircleIcon } from './icons';
+import { CheckCircleIcon, XCircleIcon, DocumentReportIcon } from './icons';
 
 interface ResponsePanelProps {
-    response: any;
+    responseData: ResponseData | null;
     loading: boolean;
-    testResults: TestResult[];
+    onOpenReport: () => void;
 }
 
 type ResponseTab = 'Body' | 'Headers' | 'Tests';
 type BodyViewMode = 'raw' | 'tree';
 
-const ResponsePanel: React.FC<ResponsePanelProps> = ({ response, loading, testResults }) => {
+const ResponsePanel: React.FC<ResponsePanelProps> = ({ responseData, loading, onOpenReport }) => {
     const [activeTab, setActiveTab] = useState<ResponseTab>('Body');
     const [bodyViewMode, setBodyViewMode] = useState<BodyViewMode>('raw');
     const [wrapLines, setWrapLines] = useState(false);
+
+    const response = responseData?.response;
+    const testResults = responseData?.testResults || [];
 
     // Reset to raw view when the response changes to avoid showing old tree data
     useEffect(() => {
@@ -54,11 +57,26 @@ const ResponsePanel: React.FC<ResponsePanelProps> = ({ response, loading, testRe
                     ))}
                 </div>
                 <div className="ml-auto flex items-center space-x-4 pr-4">
-                    {response && response.status && (
+                    {response && response.status > 0 && (
+                       <>
+                         <button 
+                            onClick={onOpenReport} 
+                            title="Crear Reporte" 
+                            className="p-1.5 rounded text-gray-400 hover:bg-gray-600 hover:text-white"
+                         >
+                            <DocumentReportIcon className="w-5 h-5"/>
+                        </button>
                         <span className={`text-sm font-semibold ${response.status >= 200 && response.status < 300 ? 'text-green-400' : 'text-red-400'}`}>
                             Status: {response.status} {response.statusText}
                         </span>
+                       </>
                     )}
+                     {response && response.status === 0 && (
+                         <span className="text-sm font-semibold text-red-400">
+                            Status: {response.statusText}
+                        </span>
+                    )}
+
                 </div>
             </div>
         );
