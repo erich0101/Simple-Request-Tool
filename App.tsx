@@ -1,5 +1,3 @@
-
-
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { PostmanCollection, PostmanItem, PostmanRequest, TestResult, ResponseData, Environment, EnvironmentValue } from './types';
 import Layout from './components/Layout';
@@ -18,6 +16,8 @@ import ConfirmationModal from './components/ConfirmationModal';
 import ExportModal from './components/ExportModal';
 import { exportToOpenApi } from './services/openapiExporter';
 import EnvironmentModal from './components/EnvironmentModal';
+import NewEnvironmentModal from './components/NewEnvironmentModal';
+import { generateCurlCommand } from './services/curlGenerator';
 
 // --- START HELPER FUNCTIONS ---
 const getActiveEnvironmentVariables = (environments: Environment[], activeEnvironmentId: string | null): Record<string, string> => {
@@ -53,6 +53,19 @@ const findItemById = (items: PostmanItem[], id: string): PostmanItem | null => {
     return null;
 };
 
+const ensureUniqueIds = (items: PostmanItem[]): PostmanItem[] => {
+    return items.map(item => {
+        const newItem = { ...item, id: item.id || crypto.randomUUID() };
+        if (newItem.item) {
+            newItem.item = ensureUniqueIds(newItem.item);
+        }
+        if (newItem.request && !newItem.request.id) {
+            newItem.request.id = newItem.id;
+        }
+        return newItem;
+    });
+};
+
 // --- END HELPER FUNCTIONS ---
 
 
@@ -70,6 +83,9 @@ const App: React.FC = () => {
     const [itemToDelete, setItemToDelete] = useState<string | null>(null);
     const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
     const [isEnvironmentModalOpen, setIsEnvironmentModalOpen] = useState(false);
+    const [isNewEnvModalOpen, setNewEnvModalOpen] = useState(false);
+    const [varsForNewEnv, setVarsForNewEnv] = useState<Record<string, string>>({});
+
 
     // --- Environment State ---
     const [environments, setEnvironments] = useState<Environment[]>([]);
@@ -96,48 +112,75 @@ const App: React.FC = () => {
     });
 
     useEffect(() => {
-        const savedCollection = localStorage.getItem('miniPostmanCollection');
-        if (savedCollection) {
-            setCollection(JSON.parse(savedCollection));
+        try {
+            const savedCollection = localStorage.getItem('miniPostmanCollection');
+            if (savedCollection) setCollection(JSON.parse(savedCollection));
+        } catch (e) {
+            console.error("Failed to load collection from localStorage", e);
+            localStorage.removeItem('miniPostmanCollection');
         }
-        const savedResponses = localStorage.getItem('miniPostmanResponses');
-        if (savedResponses) {
-            const parsedResponses = JSON.parse(savedResponses);
-            // Hydrate responses to ensure the response object exists, preventing inconsistencies
-            const hydratedResponses: Record<string, ResponseData> = {};
-            for (const key in parsedResponses) {
-                hydratedResponses[key] = {
-                    response: parsedResponses[key].response || null,
-                    testResults: parsedResponses[key].testResults || []
+
+        try {
+            const savedResponses = localStorage.getItem('miniPostmanResponses');
+            if (savedResponses) {
+                const parsedResponses = JSON.parse(savedResponses);
+                const hydratedResponses: Record<string, ResponseData> = {};
+                for (const key in parsedResponses) {
+                    hydratedResponses[key] = {
+                        response: parsedResponses[key].response || null,
+                        testResults: parsedResponses[key].testResults || []
+                    }
                 }
+                setResponses(hydratedResponses);
             }
-            setResponses(hydratedResponses);
+        } catch (e) {
+            console.error("Failed to load responses from localStorage", e);
+            localStorage.removeItem('miniPostmanResponses');
         }
-        const savedActiveId = localStorage.getItem('miniPostmanActiveId');
-        if (savedActiveId) {
-            setActiveRequestId(JSON.parse(savedActiveId));
+
+        try {
+            const savedActiveId = localStorage.getItem('miniPostmanActiveId');
+            if (savedActiveId) setActiveRequestId(JSON.parse(savedActiveId));
+        } catch (e) {
+            console.error("Failed to load active ID from localStorage", e);
+            localStorage.removeItem('miniPostmanActiveId');
         }
-        const savedOpenFolders = localStorage.getItem('miniPostmanOpenFolders');
-        if (savedOpenFolders) {
-            setOpenFolders(JSON.parse(savedOpenFolders));
+        
+        try {
+            const savedOpenFolders = localStorage.getItem('miniPostmanOpenFolders');
+            if (savedOpenFolders) setOpenFolders(JSON.parse(savedOpenFolders));
+        } catch (e) {
+            console.error("Failed to load open folders from localStorage", e);
+            localStorage.removeItem('miniPostmanOpenFolders');
         }
+
+        try {
+            const savedEnvironments = localStorage.getItem('miniPostmanEnvironments');
+            if (savedEnvironments) setEnvironments(JSON.parse(savedEnvironments));
+        } catch (e) {
+            console.error("Failed to load environments from localStorage", e);
+            localStorage.removeItem('miniPostmanEnvironments');
+        }
+
+        try {
+            const savedActiveEnvId = localStorage.getItem('miniPostmanActiveEnvId');
+            if (savedActiveEnvId) setActiveEnvironmentId(JSON.parse(savedActiveEnvId));
+        } catch (e) {
+            console.error("Failed to load active environment ID from localStorage", e);
+            localStorage.removeItem('miniPostmanActiveEnvId');
+        }
+
         const savedApiKey = localStorage.getItem('geminiApiKey');
         if (savedApiKey) {
             setApiKey(savedApiKey);
-        }
-        const savedEnvironments = localStorage.getItem('miniPostmanEnvironments');
-        if (savedEnvironments) {
-            setEnvironments(JSON.parse(savedEnvironments));
-        }
-        const savedActiveEnvId = localStorage.getItem('miniPostmanActiveEnvId');
-        if (savedActiveEnvId) {
-            setActiveEnvironmentId(JSON.parse(savedActiveEnvId));
         }
     }, []);
 
     useEffect(() => {
         if (collection) {
             localStorage.setItem('miniPostmanCollection', JSON.stringify(collection));
+        } else {
+            localStorage.removeItem('miniPostmanCollection');
         }
     }, [collection]);
 
@@ -232,8 +275,6 @@ const App: React.FC = () => {
                 }
             }
             
-            // Use cors-proxy for local development if needed, can be removed for production.
-            // const proxyUrl = 'https://cors-anywhere.herokuapp.com/';
             const res = await fetch(url, {
                 method: item.request.method,
                 headers: headers,
@@ -267,19 +308,33 @@ const App: React.FC = () => {
             const testScript = item.event?.find(e => e.listen === 'test')?.script.exec.join('\n') || '';
             const { testResults, updatedVariables } = await runTests(testScript, res, responseBody, variables);
             
-            if (Object.keys(updatedVariables).length > 0 && activeEnvironmentId) {
-                setEnvironments(prevEnvs => prevEnvs.map(env => {
-                    if (env.id === activeEnvironmentId) {
-                        const newValues = env.values.map(v => {
-                            if (updatedVariables[v.key] !== undefined && updatedVariables[v.key] !== v.value) {
-                                return { ...v, value: updatedVariables[v.key] };
+            const hasVariablesChanged = JSON.stringify(variables) !== JSON.stringify(updatedVariables);
+
+            if (hasVariablesChanged) {
+                if (activeEnvironmentId) {
+                    setEnvironments(prevEnvs => prevEnvs.map(env => {
+                        if (env.id === activeEnvironmentId) {
+                            const newValues = [...env.values];
+                            const existingKeys = new Set(env.values.map(v => v.key));
+
+                            for (const key in updatedVariables) {
+                                if (existingKeys.has(key)) {
+                                    const index = newValues.findIndex(v => v.key === key);
+                                    if (index !== -1 && newValues[index].value !== updatedVariables[key]) {
+                                        newValues[index] = { ...newValues[index], value: updatedVariables[key] };
+                                    }
+                                } else {
+                                    newValues.push({ key: key, value: updatedVariables[key], enabled: true });
+                                }
                             }
-                            return v;
-                        });
-                        return { ...env, values: newValues };
-                    }
-                    return env;
-                }));
+                            return { ...env, values: newValues };
+                        }
+                        return env;
+                    }));
+                } else {
+                    setVarsForNewEnv(updatedVariables);
+                    setNewEnvModalOpen(true);
+                }
             }
             
             setResponses(prev => ({...prev, [item.id!]: { response: responseData, testResults }}));
@@ -309,9 +364,11 @@ const App: React.FC = () => {
             return;
         }
 
+        const userInstructions = item.event?.find(e => e.listen === 'test')?.script.exec.join('\n') || '';
+
         setLoadingItemId(item.id!);
         try {
-            const { testScript } = await generateTestsForRequest(item.request!, response, apiKey);
+            const { testScript } = await generateTestsForRequest(item.request!, response, apiKey, userInstructions);
             const testEvent = { listen: 'test' as const, script: { type: 'text/javascript', exec: testScript.split('\n') } };
             const otherEvents = item.event?.filter(e => e.listen !== 'test') || [];
             handleUpdateItem({ ...item, event: [...otherEvents, testEvent] });
@@ -326,31 +383,68 @@ const App: React.FC = () => {
     };
     
     const handleImportText = (text: string) => {
+        let importedCollection: PostmanCollection | null = null;
         try {
             const parsed = JSON.parse(text);
-            if (parsed.info && parsed.item) { // Looks like a Postman collection
-                setCollection(parsed);
-            } else if (parsed.openapi || parsed.swagger) { // Looks like OpenAPI/Swagger
-                const postmanCollection = parseOpenApi(parsed);
-                setCollection(postmanCollection);
+            if (parsed.info && parsed.item) { // Postman collection
+                importedCollection = parsed;
+            } else if (parsed.openapi || parsed.swagger) { // OpenAPI/Swagger JSON
+                importedCollection = parseOpenApi(parsed);
             } else {
                  throw new Error("JSON structure not recognized as Postman or OpenAPI.");
             }
         } catch (jsonError) {
              try {
-                const parsedYaml = yaml.load(text);
+                const parsedYaml = yaml.load(text); // OpenAPI/Swagger YAML
                 if (typeof parsedYaml === 'object' && parsedYaml !== null && ('openapi' in parsedYaml || 'swagger' in parsedYaml)) {
-                    const postmanCollection = parseOpenApi(parsedYaml);
-                    setCollection(postmanCollection);
+                    importedCollection = parseOpenApi(parsedYaml);
                 } else {
                     throw new Error("Content is not a valid JSON or OpenAPI YAML.");
                 }
             } catch (yamlError) {
-                alert(`Import failed. The provided text is not a valid Postman Collection (JSON), OpenAPI/Swagger (JSON or YAML) specification.\n\nJSON Error: ${jsonError}\n\nYAML Error: ${yamlError}`);
+                alert(`Import failed. The provided text is not a valid Postman Collection (JSON), OpenAPI/Swagger (JSON or YAML) specification.\n\nJSON Error: ${jsonError.message}\n\nYAML Error: ${yamlError.message}`);
+                setImportModalOpen(false);
+                return;
             }
-        } finally {
-            setImportModalOpen(false);
         }
+
+        if (!importedCollection) {
+            alert("Failed to parse import data.");
+            setImportModalOpen(false);
+            return;
+        }
+    
+        // Ensure all items in the imported collection have unique IDs
+        const itemsWithIds = ensureUniqueIds(importedCollection.item);
+
+        // Create a new folder item from the imported collection
+        const newFolder: PostmanItem = {
+            id: crypto.randomUUID(),
+            name: importedCollection.info.name || 'Imported Collection',
+            item: itemsWithIds,
+        };
+        
+        setCollection(currentCollection => {
+            if (!currentCollection) {
+                // If no collection exists, create a new one with the imported folder
+                return {
+                    info: {
+                        _postman_id: crypto.randomUUID(),
+                        name: 'My QA Workspace',
+                        schema: 'https://schema.getpostman.com/json/collection/v2.1.0/collection.json'
+                    },
+                    item: [newFolder],
+                };
+            } else {
+                // If a collection exists, add the new folder to it
+                return {
+                    ...currentCollection,
+                    item: [...currentCollection.item, newFolder],
+                };
+            }
+        });
+
+        setImportModalOpen(false);
     };
     
     const handleImportFile = (file: File) => {
@@ -438,6 +532,41 @@ const App: React.FC = () => {
     const handleUpdateEnvironments = (updatedEnvironments: Environment[]) => {
         setEnvironments(updatedEnvironments);
         setIsEnvironmentModalOpen(false);
+    };
+    
+    const handleCreateEnvironmentFromScript = (name: string) => {
+        const newEnv: Environment = {
+            id: crypto.randomUUID(),
+            name,
+            values: Object.entries(varsForNewEnv).map(([key, value]) => ({
+                key,
+                value,
+                enabled: true,
+            })),
+        };
+
+        setEnvironments(prevEnvs => [...prevEnvs, newEnv]);
+        setActiveEnvironmentId(newEnv.id);
+        setNewEnvModalOpen(false);
+        setVarsForNewEnv({});
+    };
+
+    const handleCopyAsCurl = (itemId: string) => {
+        const item = findItemById(collection?.item || [], itemId);
+        if (!item || !item.request) {
+            console.error("Could not find request to copy as cURL");
+            return;
+        }
+
+        const variables = getActiveEnvironmentVariables(environments, activeEnvironmentId);
+        const curlCommand = generateCurlCommand(item.request, variables);
+
+        navigator.clipboard.writeText(curlCommand).then(() => {
+            alert('cURL command copied to clipboard!');
+        }).catch(err => {
+            console.error('Failed to copy cURL command: ', err);
+            alert('Failed to copy cURL command. See console for details.');
+        });
     };
 
     // --- END HANDLERS ---
@@ -630,6 +759,7 @@ const App: React.FC = () => {
                         activeEnvironmentId={activeEnvironmentId}
                         setActiveEnvironmentId={setActiveEnvironmentId}
                         onOpenEnvironmentModal={() => setIsEnvironmentModalOpen(true)}
+                        onCopyAsCurl={handleCopyAsCurl}
                     />
                 }
                 sidebarWidth={sidebarWidth}
@@ -739,6 +869,14 @@ const App: React.FC = () => {
                 onClose={() => setIsEnvironmentModalOpen(false)}
                 environments={environments}
                 onUpdateEnvironments={handleUpdateEnvironments}
+            />
+             <NewEnvironmentModal
+                isOpen={isNewEnvModalOpen}
+                onClose={() => {
+                    setNewEnvModalOpen(false);
+                    setVarsForNewEnv({});
+                }}
+                onCreate={handleCreateEnvironmentFromScript}
             />
         </>
     );
