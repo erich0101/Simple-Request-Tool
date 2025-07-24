@@ -18,6 +18,7 @@ import { exportToOpenApi } from './services/openapiExporter';
 import EnvironmentModal from './components/EnvironmentModal';
 import NewEnvironmentModal from './components/NewEnvironmentModal';
 import { generateCurlCommand } from './services/curlGenerator';
+import ReportModal from './components/ReportModal';
 
 // --- START HELPER FUNCTIONS ---
 const getActiveEnvironmentVariables = (environments: Environment[], activeEnvironmentId: string | null): Record<string, string> => {
@@ -85,6 +86,7 @@ const App: React.FC = () => {
     const [isEnvironmentModalOpen, setIsEnvironmentModalOpen] = useState(false);
     const [isNewEnvModalOpen, setNewEnvModalOpen] = useState(false);
     const [varsForNewEnv, setVarsForNewEnv] = useState<Record<string, string>>({});
+    const [reportModalItemId, setReportModalItemId] = useState<string | null>(null);
 
 
     // --- Environment State ---
@@ -128,7 +130,10 @@ const App: React.FC = () => {
                 for (const key in parsedResponses) {
                     hydratedResponses[key] = {
                         response: parsedResponses[key].response || null,
-                        testResults: parsedResponses[key].testResults || []
+                        testResults: parsedResponses[key].testResults || [],
+                        requestHeaders: parsedResponses[key].requestHeaders,
+                        requestTimestamp: parsedResponses[key].requestTimestamp,
+                        responseTime: parsedResponses[key].responseTime,
                     }
                 }
                 setResponses(hydratedResponses);
@@ -185,12 +190,15 @@ const App: React.FC = () => {
     }, [collection]);
 
      useEffect(() => {
-        const responsesToSave: Record<string, { response: any, testResults: TestResult[] }> = {};
+        const responsesToSave: Record<string, any> = {};
         Object.keys(responses).forEach(key => {
             if (responses[key]) {
                  responsesToSave[key] = {
                     response: responses[key].response || null,
                     testResults: responses[key].testResults || [],
+                    requestHeaders: responses[key].requestHeaders,
+                    requestTimestamp: responses[key].requestTimestamp,
+                    responseTime: responses[key].responseTime,
                  };
             }
         });
@@ -243,15 +251,20 @@ const App: React.FC = () => {
         if (!item.request?.url?.raw) return;
         setLoadingItemId(item.id!);
         
+        const startTime = Date.now();
+        const variables = getActiveEnvironmentVariables(environments, activeEnvironmentId);
+        const requestHeadersForReport: Record<string, string> = {};
+        
         try {
-            const variables = getActiveEnvironmentVariables(environments, activeEnvironmentId);
-            
             const url = replaceVariables(item.request.url.raw, variables);
             
             const headers = new Headers();
             item.request.header?.forEach(h => {
                 if (h.key) {
-                    headers.append(replaceVariables(h.key, variables), replaceVariables(h.value, variables));
+                    const key = replaceVariables(h.key, variables);
+                    const value = replaceVariables(h.value, variables);
+                    headers.append(key, value);
+                    requestHeadersForReport[key] = value;
                 }
             });
 
@@ -259,9 +272,9 @@ const App: React.FC = () => {
             if (item.request.method !== 'GET' && item.request.method !== 'HEAD') {
                 if (item.request.body?.mode === 'raw' && item.request.body.raw) {
                     body = replaceVariables(item.request.body.raw, variables);
-                     // If Content-Type is not set by the user, default to application/json for raw body
                     if (!headers.has('Content-Type')) {
                         headers.set('Content-Type', 'application/json');
+                        requestHeadersForReport['Content-Type'] = 'application/json';
                     }
                 } else if (item.request.body?.mode === 'formdata') {
                     const formData = new FormData();
@@ -275,7 +288,6 @@ const App: React.FC = () => {
                         }
                     });
                     body = formData;
-                    // Let the browser set the Content-Type for FormData
                     headers.delete('Content-Type');
                 }
             }
@@ -285,6 +297,8 @@ const App: React.FC = () => {
                 headers: headers,
                 body: body,
             });
+            const endTime = Date.now();
+            const responseTime = endTime - startTime;
 
             const responseHeaders: Record<string, string> = {};
             res.headers.forEach((value, key) => {
@@ -342,17 +356,19 @@ const App: React.FC = () => {
                 }
             }
             
-            setResponses(prev => ({...prev, [item.id!]: { response: responseData, testResults }}));
+            setResponses(prev => ({...prev, [item.id!]: { response: responseData, testResults, requestTimestamp: startTime, responseTime, requestHeaders: requestHeadersForReport }}));
             setMainView('response');
 
         } catch (error) {
+             const endTime = Date.now();
+             const responseTime = endTime - startTime;
              const errorResponse = {
                 status: 0,
                 statusText: 'Request Error',
                 headers: {},
                 body: error instanceof Error ? { error: error.name, message: error.message, stack: error.stack } : { error: 'Unknown error', message: String(error) }
             };
-             setResponses(prev => ({...prev, [item.id!]: { response: errorResponse, testResults: [] }}));
+             setResponses(prev => ({...prev, [item.id!]: { response: errorResponse, testResults: [], requestTimestamp: startTime, responseTime, requestHeaders: requestHeadersForReport }}));
              setMainView('response');
         } finally {
             setLoadingItemId(null);
@@ -741,6 +757,10 @@ const App: React.FC = () => {
     };
 
     // --- START JSX ---
+    
+    const reportModalItem = reportModalItemId ? findItemById(collection?.item || [], reportModalItemId) : null;
+    const reportModalResponseData = reportModalItemId ? responses[reportModalItemId] : null;
+
     return (
         <>
             <Layout
@@ -819,8 +839,8 @@ const App: React.FC = () => {
                             >
                                <ResponsePanel
                                     loading={loadingItemId === activeRequestItem.id}
-                                    response={activeResponseData?.response}
-                                    testResults={activeResponseData?.testResults || []}
+                                    responseData={activeResponseData}
+                                    onOpenReport={() => setReportModalItemId(activeRequestItem.id)}
                                 />
                             </div>
 
@@ -882,6 +902,12 @@ const App: React.FC = () => {
                     setVarsForNewEnv({});
                 }}
                 onCreate={handleCreateEnvironmentFromScript}
+            />
+            <ReportModal
+                isOpen={!!reportModalItemId}
+                onClose={() => setReportModalItemId(null)}
+                item={reportModalItem}
+                responseData={reportModalResponseData}
             />
         </>
     );
