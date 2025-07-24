@@ -96,14 +96,8 @@ const createExpect = (actual: any, negated = false): any => {
 };
 
 
-export const runTests = async (
-    script: string, 
-    response: Response, 
-    responseBody: any,
-    environmentVariables: Record<string, string>
-): Promise<{ testResults: TestResult[]; updatedVariables: Record<string, string> }> => {
+export const runTests = async (script: string, response: Response, responseBody: any): Promise<TestResult[]> => {
     const results: TestResult[] = [];
-    const mutableEnv = { ...environmentVariables };
 
     const pm = {
         response: {
@@ -128,14 +122,6 @@ export const runTests = async (
                         }
                     }
                 }
-            }
-        },
-        environment: {
-            get: (key: string): string | undefined => {
-                return mutableEnv[key];
-            },
-            set: (key: string, value: any) => {
-                mutableEnv[key] = String(value);
             }
         },
         test: (testName: string, callback: () => void) => {
@@ -165,5 +151,5 @@ export const runTests = async (
         });
     }
 
-    return { testResults: results, updatedVariables: mutableEnv };
+    return results;
 };
