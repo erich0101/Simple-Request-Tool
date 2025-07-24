@@ -257,8 +257,12 @@ const App: React.FC = () => {
 
             let body: BodyInit | undefined = undefined;
             if (item.request.method !== 'GET' && item.request.method !== 'HEAD') {
-                if (item.request.body?.mode === 'raw') {
-                    body = replaceVariables(item.request.body.raw || '', variables);
+                if (item.request.body?.mode === 'raw' && item.request.body.raw) {
+                    body = replaceVariables(item.request.body.raw, variables);
+                     // If Content-Type is not set by the user, default to application/json for raw body
+                    if (!headers.has('Content-Type')) {
+                        headers.set('Content-Type', 'application/json');
+                    }
                 } else if (item.request.body?.mode === 'formdata') {
                     const formData = new FormData();
                     item.request.body.formdata?.forEach(p => {
@@ -271,6 +275,7 @@ const App: React.FC = () => {
                         }
                     });
                     body = formData;
+                    // Let the browser set the Content-Type for FormData
                     headers.delete('Content-Type');
                 }
             }
