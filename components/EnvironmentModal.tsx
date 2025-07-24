@@ -107,7 +107,7 @@ const EnvironmentModal: React.FC<EnvironmentModalProps> = ({ isOpen, onClose, en
     const selectedEnv = editedEnvironments.find(env => env.id === selectedEnvId);
 
     return (
-        <Modal isOpen={isOpen} onClose={handleSaveChanges} title="Administrador de Entornos">
+        <Modal isOpen={isOpen} onClose={handleSaveChanges} title="Administrador de Entornos" maxWidth="4xl">
             <div className="flex flex-col md:flex-row h-[70vh] md:h-[60vh]">
                 {/* Left Panel: Environment List */}
                 <div className="w-full md:w-1/3 border-b md:border-b-0 md:border-r border-gray-700 p-2 flex flex-col">
