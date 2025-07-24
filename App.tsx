@@ -11,13 +11,32 @@ import ImportModal from './components/ImportModal';
 import { parseOpenApi } from './services/openapiParser';
 import yaml from 'js-yaml';
 import ApiKeyModal from './components/ApiKeyModal';
-import { MenuIcon } from './components/icons';
+import { MenuIcon, ImportIcon } from './components/icons';
 import ConfirmationModal from './components/ConfirmationModal';
 import ExportModal from './components/ExportModal';
 import { exportToOpenApi } from './services/openapiExporter';
 import EnvironmentModal from './components/EnvironmentModal';
 
 // --- START HELPER FUNCTIONS ---
+const getActiveEnvironmentVariables = (environments: Environment[], activeEnvironmentId: string | null): Record<string, string> => {
+    if (!activeEnvironmentId) return {};
+    const activeEnv = environments.find(env => env.id === activeEnvironmentId);
+    if (!activeEnv) return {};
+    return activeEnv.values.reduce((acc, v) => {
+        if (v.enabled && v.key) {
+            acc[v.key] = v.value;
+        }
+        return acc;
+    }, {} as Record<string, string>);
+};
+
+const replaceVariables = (str: string, variables: Record<string, string>): string => {
+    if (!str) return '';
+    // Replace {{variable}} with its value, or leave it if not found
+    return str.replace(/\{\{(.*?)\}\}/g, (match, key) => {
+        return variables[key] !== undefined ? variables[key] : match;
+    });
+};
 
 const findItemById = (items: PostmanItem[], id: string): PostmanItem | null => {
     for (const item of items) {
@@ -121,10 +140,11 @@ const App: React.FC = () => {
     }, [collection]);
 
      useEffect(() => {
-        const responsesToSave: Record<string, { testResults: TestResult[] }> = {};
+        const responsesToSave: Record<string, { response: any, testResults: TestResult[] }> = {};
         Object.keys(responses).forEach(key => {
             if (responses[key]) {
                  responsesToSave[key] = {
+                    response: responses[key].response || null,
                     testResults: responses[key].testResults || [],
                  };
             }
@@ -168,19 +188,257 @@ const App: React.FC = () => {
         localStorage.setItem('miniPostmanActiveEnvId', JSON.stringify(activeEnvironmentId));
     }, [activeEnvironmentId]);
     
-    const findRequest = (items: PostmanItem[], id: string): PostmanItem | null => {
-        for (const item of items) {
-            if (item.item) { // It's a folder
-                const found = findRequest(item.item, id);
-                if (found) return found;
-            } else if (item.id === id) { // It's a request
-                return item;
+    const activeRequestItem = activeRequestId && collection ? findItemById(collection.item, activeRequestId) : null;
+    const activeResponseData = activeRequestId ? responses[activeRequestId] : null;
+    const activeEnvironmentVariables = getActiveEnvironmentVariables(environments, activeEnvironmentId);
+
+    // --- START HANDLERS ---
+    
+    const handleSendRequest = async (item: PostmanItem, files?: Record<string, File>) => {
+        if (!item.request?.url?.raw) return;
+        setLoadingItemId(item.id!);
+        
+        try {
+            const variables = getActiveEnvironmentVariables(environments, activeEnvironmentId);
+            
+            const url = replaceVariables(item.request.url.raw, variables);
+            
+            const headers = new Headers();
+            item.request.header?.forEach(h => {
+                if (h.key) {
+                    headers.append(replaceVariables(h.key, variables), replaceVariables(h.value, variables));
+                }
+            });
+
+            let body: BodyInit | undefined = undefined;
+            if (item.request.method !== 'GET' && item.request.method !== 'HEAD') {
+                if (item.request.body?.mode === 'raw') {
+                    body = replaceVariables(item.request.body.raw || '', variables);
+                } else if (item.request.body?.mode === 'formdata') {
+                    const formData = new FormData();
+                    item.request.body.formdata?.forEach(p => {
+                        if (p.key) {
+                             if (p.type === 'file' && files?.[p.key]) {
+                                formData.append(p.key, files[p.key]);
+                            } else {
+                                formData.append(replaceVariables(p.key, variables), replaceVariables(p.value, variables));
+                            }
+                        }
+                    });
+                    body = formData;
+                    headers.delete('Content-Type');
+                }
             }
+            
+            // Use cors-proxy for local development if needed, can be removed for production.
+            // const proxyUrl = 'https://cors-anywhere.herokuapp.com/';
+            const res = await fetch(url, {
+                method: item.request.method,
+                headers: headers,
+                body: body,
+            });
+
+            const responseHeaders: Record<string, string> = {};
+            res.headers.forEach((value, key) => {
+                responseHeaders[key] = value;
+            });
+            
+            let responseBody: any;
+            const contentType = res.headers.get('content-type');
+            if (contentType && contentType.includes('application/json')) {
+                try {
+                    responseBody = await res.json();
+                } catch {
+                     responseBody = await res.text();
+                }
+            } else {
+                responseBody = await res.text();
+            }
+            
+            const responseData = {
+                status: res.status,
+                statusText: res.statusText,
+                headers: responseHeaders,
+                body: responseBody
+            };
+            
+            const testScript = item.event?.find(e => e.listen === 'test')?.script.exec.join('\n') || '';
+            const { testResults, updatedVariables } = await runTests(testScript, res, responseBody, variables);
+            
+            if (Object.keys(updatedVariables).length > 0 && activeEnvironmentId) {
+                setEnvironments(prevEnvs => prevEnvs.map(env => {
+                    if (env.id === activeEnvironmentId) {
+                        const newValues = env.values.map(v => {
+                            if (updatedVariables[v.key] !== undefined && updatedVariables[v.key] !== v.value) {
+                                return { ...v, value: updatedVariables[v.key] };
+                            }
+                            return v;
+                        });
+                        return { ...env, values: newValues };
+                    }
+                    return env;
+                }));
+            }
+            
+            setResponses(prev => ({...prev, [item.id!]: { response: responseData, testResults }}));
+            setMainView('response');
+
+        } catch (error) {
+             const errorResponse = {
+                status: 0,
+                statusText: 'Request Error',
+                headers: {},
+                body: error instanceof Error ? { error: error.name, message: error.message, stack: error.stack } : { error: 'Unknown error', message: String(error) }
+            };
+             setResponses(prev => ({...prev, [item.id!]: { response: errorResponse, testResults: [] }}));
+             setMainView('response');
+        } finally {
+            setLoadingItemId(null);
         }
-        return null;
     };
 
-    const activeRequestItem = activeRequestId && collection ? findItemById(collection.item, activeRequestId) : null;
+    const handleGenerateTests = async (item: PostmanItem, response: any) => {
+        if (!apiKey) {
+            setApiKeyModalOpen(true);
+            return;
+        }
+        if (!response) {
+            alert('Please send the request first to get a response before generating tests.');
+            return;
+        }
+
+        setLoadingItemId(item.id!);
+        try {
+            const { testScript } = await generateTestsForRequest(item.request!, response, apiKey);
+            const testEvent = { listen: 'test' as const, script: { type: 'text/javascript', exec: testScript.split('\n') } };
+            const otherEvents = item.event?.filter(e => e.listen !== 'test') || [];
+            handleUpdateItem({ ...item, event: [...otherEvents, testEvent] });
+            alert('Tests generated successfully and added to the "Tests" tab.');
+
+        } catch (error) {
+            console.error("Failed to generate tests:", error);
+            alert(`Failed to generate tests: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        } finally {
+            setLoadingItemId(null);
+        }
+    };
+    
+    const handleImportText = (text: string) => {
+        try {
+            const parsed = JSON.parse(text);
+            if (parsed.info && parsed.item) { // Looks like a Postman collection
+                setCollection(parsed);
+            } else if (parsed.openapi || parsed.swagger) { // Looks like OpenAPI/Swagger
+                const postmanCollection = parseOpenApi(parsed);
+                setCollection(postmanCollection);
+            } else {
+                 throw new Error("JSON structure not recognized as Postman or OpenAPI.");
+            }
+        } catch (jsonError) {
+             try {
+                const parsedYaml = yaml.load(text);
+                if (typeof parsedYaml === 'object' && parsedYaml !== null && ('openapi' in parsedYaml || 'swagger' in parsedYaml)) {
+                    const postmanCollection = parseOpenApi(parsedYaml);
+                    setCollection(postmanCollection);
+                } else {
+                    throw new Error("Content is not a valid JSON or OpenAPI YAML.");
+                }
+            } catch (yamlError) {
+                alert(`Import failed. The provided text is not a valid Postman Collection (JSON), OpenAPI/Swagger (JSON or YAML) specification.\n\nJSON Error: ${jsonError}\n\nYAML Error: ${yamlError}`);
+            }
+        } finally {
+            setImportModalOpen(false);
+        }
+    };
+    
+    const handleImportFile = (file: File) => {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            const text = e.target?.result as string;
+            if (text) {
+                handleImportText(text);
+            }
+        };
+        reader.onerror = () => {
+             alert(`Failed to read file: ${reader.error}`);
+             setImportModalOpen(false);
+        }
+        reader.readAsText(file);
+    };
+
+    const handleConfirmExport = (format: 'postman' | 'openapi') => {
+        if (!collection) return;
+        
+        let itemsToExport = collection.item;
+        const name = collection.info.name;
+
+        if (selectedIds.size > 0) {
+            const filterSelected = (items: PostmanItem[]): PostmanItem[] => {
+                return items.reduce((acc: PostmanItem[], item) => {
+                    if (selectedIds.has(item.id!)) {
+                        acc.push(item);
+                        return acc;
+                    }
+                    if (item.item) {
+                        const subItems = filterSelected(item.item);
+                        if (subItems.length > 0) {
+                            acc.push({ ...item, item: subItems });
+                        }
+                    }
+                    return acc;
+                }, []);
+            };
+            itemsToExport = filterSelected(collection.item);
+        }
+
+        if (itemsToExport.length === 0) {
+            alert("No items selected for export.");
+            return;
+        }
+
+        let exportData: object;
+        let fileName: string;
+
+        if (format === 'postman') {
+            exportData = { ...collection, item: itemsToExport };
+            fileName = `${name.replace(/\s/g, '_')}.postman_collection.json`;
+        } else {
+            exportData = exportToOpenApi(name, itemsToExport);
+            fileName = `${name.replace(/\s/g, '_')}.openapi.json`;
+        }
+        
+        const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = fileName;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        
+        setExportModalOpen(false);
+        setSelectedIds(new Set());
+    };
+    
+    const handleSelectionChange = (itemId: string, isSelected: boolean) => {
+        setSelectedIds(prev => {
+            const newSet = new Set(prev);
+            if (isSelected) {
+                newSet.add(itemId);
+            } else {
+                newSet.delete(itemId);
+            }
+            return newSet;
+        });
+    };
+
+    const handleUpdateEnvironments = (updatedEnvironments: Environment[]) => {
+        setEnvironments(updatedEnvironments);
+        setIsEnvironmentModalOpen(false);
+    };
+
+    // --- END HANDLERS ---
     
     // --- START RECURSIVE ITEM MANIPULATION ---
 
@@ -318,509 +576,35 @@ const App: React.FC = () => {
         setCollection({ ...collection, item: newItems });
     };
     
-    // --- END RECURSIVE ITEM MANIPULATION ---
+    // --- VERTICAL RESIZER LOGIC ---
+    const mainContentRef = useRef<HTMLDivElement>(null);
+    const isResizingVertical = useRef(false);
 
-    const substituteVariables = (text: string, env: Environment | null): string => {
-        if (!env || !text) return text;
-        
-        return text.replace(/\{\{(.+?)\}\}/g, (match, variableName) => {
-            const variable = env.values.find(v => v.key === variableName && v.enabled);
-            return variable ? variable.value : match;
-        });
-    };
-
-    const handleSendRequest = async (item: PostmanItem, files?: Record<string, File>) => {
-        const { id: itemId, request } = item;
-        if (!itemId || !request) return;
-        
-        const activeEnvironment = environments.find(env => env.id === activeEnvironmentId);
-        const substitute = (str: string) => substituteVariables(str, activeEnvironment || null);
-
-        const prepareUrl = (rawUrl: string): string => {
-            let url = rawUrl.trim();
-            if (!url) return '';
-            if (!/^(https?|ftp):\/\//i.test(url)) {
-                url = 'https://' + url;
-            }
-            return url;
-        };
-
-        const rawUrl = substitute(request.url?.raw || '');
-        if (!rawUrl.trim()) {
-            setResponses(prev => ({ ...prev, [itemId]: { ...prev[itemId], response: { status: 'Error', body: 'Request URL is empty.' } } }));
-            return;
-        }
-        const url = prepareUrl(rawUrl);
-
-        setLoadingItemId(itemId);
-        setResponses(prev => ({...prev, [itemId]: { response: null, testResults: [] }}));
-
-        try {
-            const headers = request.header?.filter(h => h.key.toLowerCase() !== 'content-length').reduce((acc, h) => {
-                if(h.key && h.value) acc[substitute(h.key)] = substitute(h.value);
-                return acc;
-            }, {} as Record<string, string>) || {};
-            
-            let body: BodyInit | undefined = undefined;
-
-            if (request.method !== 'GET' && request.method !== 'HEAD' && request.body) {
-                if (request.body.mode === 'raw') {
-                    body = substitute(request.body.raw || '');
-                    if (body) {
-                        const hasContentType = Object.keys(headers).some(k => k.toLowerCase() === 'content-type');
-                        if (!hasContentType) {
-                            headers['Content-Type'] = 'application/json;charset=UTF-8';
-                        }
-                    }
-                } else if (request.body.mode === 'formdata' && request.body.formdata) {
-                    const formData = new FormData();
-                    request.body.formdata.forEach(param => {
-                         if (!param.key) return;
-                        if (param.type === 'file' && files?.[param.key]) {
-                            formData.append(param.key, files[param.key]);
-                        } else if (param.type === 'text') {
-                            formData.append(param.key, substitute(param.value));
-                        }
-                    });
-                    body = formData;
-                    delete headers['Content-Type']; 
-                    delete headers['content-type'];
-                }
-            }
-            
-            const res = await fetch(url, {
-                method: request.method,
-                headers: headers,
-                body: body,
-            });
-            
-            if (res.status === 204 || res.status === 205) {
-                setResponses(prev => ({
-                    ...prev,
-                    [itemId]: {
-                        response: {
-                            status: res.status,
-                            statusText: res.statusText,
-                            headers: Object.fromEntries(res.headers.entries()),
-                            body: "Response has no content.",
-                        },
-                        testResults: []
-                    }
-                }));
-                return;
-            }
-
-            const responseBody = await res.clone().json().catch(() => res.clone().text());
-            
-            const responseData = {
-                status: res.status,
-                statusText: res.statusText,
-                headers: Object.fromEntries(res.headers.entries()),
-                body: responseBody,
-            };
-            
-            const testScript = activeRequestItem?.event?.find(e => e.listen === 'test')?.script.exec.join('\n') || '';
-            let testResults: TestResult[] = [];
-            
-            const currentEnvVars = activeEnvironment?.values.reduce((acc, v) => {
-                if (v.enabled && v.key) {
-                    acc[v.key] = v.value;
-                }
-                return acc;
-            }, {} as Record<string, string>) || {};
-
-            if (testScript) {
-                const testRunResult = await runTests(testScript, res, responseBody, currentEnvVars);
-                testResults = testRunResult.testResults;
-                const { updatedVariables } = testRunResult;
-
-                if (activeEnvironment && JSON.stringify(currentEnvVars) !== JSON.stringify(updatedVariables)) {
-                    setEnvironments(prevEnvs => 
-                        prevEnvs.map(env => {
-                            if (env.id !== activeEnvironmentId) return env;
-
-                            const newEnv = { ...env, values: [...env.values.map(v => ({...v}))] };
-                            
-                            for (const key in updatedVariables) {
-                                const existingVarIndex = newEnv.values.findIndex((v: EnvironmentValue) => v.key === key);
-
-                                if (existingVarIndex > -1) {
-                                    newEnv.values[existingVarIndex].value = updatedVariables[key];
-                                } else {
-                                    newEnv.values.push({ key, value: updatedVariables[key], enabled: true });
-                                }
-                            }
-                            return newEnv;
-                        })
-                    );
-                }
-            }
-
-            setResponses(prev => ({ ...prev, [itemId]: { response: responseData, testResults } }));
-
-        } catch (error) {
-            let errorMessage = 'An unknown error occurred.';
-            if (error instanceof Error) {
-                errorMessage = error.message;
-                 if (errorMessage.includes('Failed to fetch')) { 
-                    errorMessage = `Network Error: ${error.message}\n\nThis could be due to a few reasons:\n- CORS Policy: The API server doesn't allow requests from this web app.\n- Network Issue: You might be offline, or there's a DNS problem.\n- Invalid URL: The URL might be malformed.\n\nCheck the browser's developer console (F12) for more specific details.`;
-                }
-            }
-             setResponses(prev => ({
-                ...prev,
-                [itemId]: {
-                    ...prev[itemId],
-                    response: {
-                        status: 'Error',
-                        body: errorMessage,
-                    }
-                }
-            }));
-        } finally {
-            setLoadingItemId(null);
-            setMainView('response');
-        }
-    };
-
-    const handleGenerateTests = async (itemToUpdate: PostmanItem, responseData: any) => {
-        if (!itemToUpdate.id || !itemToUpdate.request) return;
-        if (!apiKey) {
-            setApiKeyModalOpen(true);
-            return;
-        }
-        if (!responseData || !responseData.body || responseData.status === 'Error') {
-            setErrorModalOpen(true);
-            return;
-        }
-
-        setLoadingItemId(itemToUpdate.id);
-        try {
-            const { testScript } = await generateTestsForRequest(itemToUpdate.request, responseData, apiKey);
-            const updatedItem = { ...itemToUpdate };
-            let testEvent = updatedItem.event?.find(e => e.listen === 'test');
-            if (testEvent) {
-                testEvent.script.exec = testScript.split('\n');
-            } else {
-                if (!updatedItem.event) {
-                    updatedItem.event = [];
-                }
-                updatedItem.event.push({
-                    listen: 'test',
-                    script: { type: 'text/javascript', exec: testScript.split('\n') },
-                });
-            }
-            handleUpdateItem(updatedItem);
-        } catch (error) {
-            console.error("Failed to generate tests:", error);
-            alert(`Failed to generate tests. ${error instanceof Error ? error.message : "Check the console for details."}`);
-        } finally {
-            setLoadingItemId(null);
-        }
-    };
-
-    // --- START IMPORT/EXPORT LOGIC ---
-    
-    const getAllDescendantIds = useCallback((items: PostmanItem[], parentId: string): string[] => {
-        const parentItem = findItemById(items, parentId);
-        if (!parentItem || !parentItem.item) return [];
-        let ids: string[] = [];
-        const queue = [...parentItem.item];
-        while (queue.length > 0) {
-            const current = queue.shift()!;
-            ids.push(current.id!);
-            if (current.item) queue.push(...current.item);
-        }
-        return ids;
+    const handleVerticalMouseMove = useCallback((e: MouseEvent) => {
+        if (!isResizingVertical.current || !mainContentRef.current) return;
+        const mainRect = mainContentRef.current.getBoundingClientRect();
+        const newHeight = e.clientY - mainRect.top;
+        setRequestPanelHeight(Math.max(150, Math.min(newHeight, mainRect.height - 150)));
     }, []);
 
-    const handleSelectionChange = useCallback((itemId: string, isSelected: boolean) => {
-        if (!collection) return;
-        const descendantIds = getAllDescendantIds(collection.item, itemId);
-        const idsToChange = [itemId, ...descendantIds];
-        setSelectedIds(prev => {
-            const newSet = new Set(prev);
-            if (isSelected) idsToChange.forEach(id => newSet.add(id));
-            else idsToChange.forEach(id => newSet.delete(id));
-            return newSet;
-        });
-    }, [collection, getAllDescendantIds]);
-
-    const buildSelectedTree = (items: PostmanItem[], selectedIds: Set<string>): PostmanItem[] => {
-        const result: PostmanItem[] = [];
-        for (const item of items) {
-            if (item.request) {
-                if (selectedIds.has(item.id!)) result.push(item);
-            } else if (item.item) {
-                const selectedChildren = buildSelectedTree(item.item, selectedIds);
-                if (selectedIds.has(item.id!) || selectedChildren.length > 0) {
-                    result.push({ ...item, item: selectedChildren });
-                }
-            }
-        }
-        return result;
-    };
-    
-    const handleExport = () => {
-        if (!collection) return;
-        setExportModalOpen(true);
-    };
-
-    const handleConfirmExport = (format: 'postman' | 'openapi') => {
-        if (!collection) return;
-        let itemsToProcess: PostmanItem[];
-        let exportName: string;
-        if (selectedIds.size > 0) {
-            itemsToProcess = buildSelectedTree(collection.item, selectedIds);
-            exportName = `${collection.info.name} (Selection)`;
-        } else {
-            itemsToProcess = collection.item;
-            exportName = collection.info.name;
-        }
-        let fileContent: string;
-        let fileName: string;
-        if (format === 'openapi') {
-            const openApiSpec = exportToOpenApi(exportName, itemsToProcess);
-            fileContent = JSON.stringify(openApiSpec, null, 2);
-            fileName = `${exportName.replace(/\s/g, '_')}_openapi.json`;
-        } else {
-            const collectionToExport = {
-                info: { _postman_id: crypto.randomUUID(), name: exportName, schema: 'https://schema.getpostman.com/json/collection/v2.1.0/collection.json' },
-                item: itemsToProcess
-            };
-            fileContent = JSON.stringify(collectionToExport, null, 2);
-            fileName = `${exportName.replace(/\s/g, '_')}_collection.json`;
-        }
-        const blob = new Blob([fileContent], { type: 'application/json' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = fileName;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
-        setExportModalOpen(false);
-    };
-
-    const parseCurlCommand = (curlCommand: string): Partial<PostmanRequest> & { url: { raw: string } } => {
-        const tokens = curlCommand.replace(/\\\n/g, ' ').match(/(?:[^\s"']+|"[^"]*"|'[^']*')/g) || [];
-        const request: Partial<PostmanRequest> & { url: { raw: string } } = { method: 'GET', url: { raw: '' }, header: [], body: { mode: 'raw', raw: '' } };
-        let i = 0;
-        while (i < tokens.length) {
-            const token = tokens[i];
-            const unquote = (t: string) => t.startsWith("'") && t.endsWith("'") || t.startsWith('"') && t.endsWith('"') ? t.slice(1, -1) : t;
-            switch (token) {
-                case 'curl':
-                    if (tokens[i + 1] && !tokens[i + 1].startsWith('-')) {
-                        request.url.raw = unquote(tokens[i + 1]); i++; 
-                    }
-                    break;
-                case '--location':
-                    if (tokens[i + 1] && !tokens[i + 1].startsWith('-')) request.url.raw = unquote(tokens[++i]);
-                    break;
-                case '-X': case '--request':
-                    request.method = unquote(tokens[++i]).toUpperCase() as PostmanRequest['method'];
-                    break;
-                case '-H': case '--header':
-                    const headerLine = unquote(tokens[++i]); const separatorIndexHeader = headerLine.indexOf(':');
-                    if (separatorIndexHeader !== -1) {
-                        const key = headerLine.substring(0, separatorIndexHeader).trim(); const value = headerLine.substring(separatorIndexHeader + 1).trim();
-                        if (key) request.header?.push({ key, value, type: 'text' });
-                    }
-                    break;
-                case '--data': case '--data-raw': case '-d':
-                    if (request.body) { request.body.mode = 'raw'; request.body.raw = unquote(tokens[++i]); }
-                    if (request.method === 'GET') request.method = 'POST';
-                    break;
-                case '--form':
-                    const formArg = unquote(tokens[++i]); const separatorIndexForm = formArg.indexOf('=');
-                    if (separatorIndexForm !== -1) {
-                        const key = formArg.substring(0, separatorIndexForm).trim(); let value = formArg.substring(separatorIndexForm + 1);
-                        if (request.body?.mode !== 'formdata') request.body = { mode: 'formdata', formdata: [] };
-                        if (!request.body.formdata) request.body.formdata = [];
-                        if (value.startsWith('@')) {
-                            const filePath = unquote(value.substring(1));
-                            request.body.formdata.push({ key, value: filePath, type: 'file' });
-                        } else {
-                            request.body.formdata.push({ key, value: unquote(value), type: 'text' });
-                        }
-                        if (request.method === 'GET') request.method = 'POST';
-                    }
-                    break;
-                default:
-                    if (!request.url.raw && token.startsWith('http')) request.url.raw = unquote(token);
-                    break;
-            }
-            i++;
-        }
-        return request;
-    };
-    
-    const handleImportFromCurl = (curlString: string) => {
-        const parsed = parseCurlCommand(curlString);
-        if (!parsed.url?.raw) throw new Error('Could not parse URL from cURL command.');
-        const newRequestId = crypto.randomUUID();
-        const newRequestItem: PostmanItem = {
-            id: newRequestId,
-            name: `cURL Import - ${new URL(parsed.url.raw).hostname}`,
-            request: {
-                id: newRequestId, method: parsed.method || 'GET', header: parsed.header || [],
-                body: parsed.body || { mode: 'raw', raw: '' }, url: { raw: parsed.url.raw },
-            },
-        };
-        if (collection) setCollection({ ...collection, item: [...collection.item, newRequestItem] });
-        else {
-            const newCollection: PostmanCollection = {
-                info: { _postman_id: crypto.randomUUID(), name: 'My QA Workspace', schema: 'https://schema.getpostman.com/json/collection/v2.1.0/collection.json', },
-                item: [newRequestItem],
-            }; setCollection(newCollection);
-        }
-        handleSetActiveRequest(newRequestId);
-    };
-    
-    const handleImportText = (text: string) => {
-        try {
-            let data; let importedCollection: PostmanCollection | null = null; let isNewCollection = false;
-            try {
-                data = JSON.parse(text);
-                if (data.openapi || data.swagger) { importedCollection = parseOpenApi(data); isNewCollection = true; }
-                else if (data.info && data.item) {
-                     const assignIds = (items: PostmanItem[]): PostmanItem[] => items.map(item => ({
-                        ...item, id: item.id || crypto.randomUUID(),
-                        item: item.item ? assignIds(item.item) : undefined,
-                        request: item.request ? { ...item.request, id: item.request.id || crypto.randomUUID() } : undefined
-                    }));
-                    importedCollection = { ...data, item: assignIds(data.item) }; isNewCollection = true;
-                } else if (data.name && Array.isArray(data.values) && data._postman_variable_scope === 'environment') {
-                    const newEnv: Environment = {
-                        id: data.id || crypto.randomUUID(),
-                        name: data.name,
-                        values: (data.values || []).map((v: any) => ({
-                            key: v.key || '',
-                            value: v.value || '',
-                            enabled: v.enabled !== false,
-                        }))
-                    };
-                    setEnvironments(prev => [...prev, newEnv]);
-                    setActiveEnvironmentId(newEnv.id); // Set newly imported environment as active
-                    setIsEnvironmentModalOpen(true);
-                    setImportModalOpen(false);
-                    return;
-                }
-            } catch (e) { /* ignore */ }
-            if (!importedCollection) {
-                try {
-                    data = yaml.load(text);
-                    if (data && typeof data === 'object' && (data.openapi || data.swagger)) { importedCollection = parseOpenApi(data); isNewCollection = true; }
-                } catch (e) { /* ignore */ }
-            }
-            if (importedCollection && isNewCollection) {
-                const newFolder: PostmanItem = {
-                    id: importedCollection.info._postman_id || crypto.randomUUID(), name: importedCollection.info.name, item: importedCollection.item,
-                };
-                if (collection) setCollection({ ...collection, item: [...collection.item, newFolder] });
-                else {
-                    const newCollection: PostmanCollection = {
-                         info: { _postman_id: crypto.randomUUID(), name: 'My QA Workspace', schema: 'https://schema.getpostman.com/json/collection/v2.1.0/collection.json' },
-                         item: [newFolder]
-                    }
-                    setCollection(newCollection);
-                }
-                handleSetActiveRequest(null);
-                setImportModalOpen(false);
-                return;
-            }
-            handleImportFromCurl(text);
-            setImportModalOpen(false);
-        } catch (error) {
-            console.error("Import failed:", error);
-            alert(`Failed to import. The format might be unsupported or the content may be invalid. Error: ${error instanceof Error ? error.message : String(error)}`);
-            setImportModalOpen(false);
-        }
-    };
-
-    const handleFileImport = (file: File) => {
-        const reader = new FileReader();
-        reader.onload = (e) => {
-            const text = e.target?.result as string; if (text) handleImportText(text);
-        };
-        reader.onerror = () => alert('Failed to read the file.');
-        reader.readAsText(file);
-    };
-
-    // --- END IMPORT/EXPORT LOGIC ---
-
-    // --- START PANEL RESIZING LOGIC ---
-    const isResizingRequestPanel = useRef(false);
-    const mainPanelRef = useRef<HTMLDivElement>(null);
-
-    const handleRequestPanelMouseMove = useCallback((e: MouseEvent) => {
-        if (isResizingRequestPanel.current && mainPanelRef.current) {
-            const mainPanelTop = mainPanelRef.current.getBoundingClientRect().top;
-            const totalHeight = mainPanelRef.current.clientHeight;
-            const newHeight = Math.max(150, Math.min(e.clientY - mainPanelTop, totalHeight - 150));
-            setRequestPanelHeight(newHeight);
-        }
-    }, [setRequestPanelHeight]);
-
-    const handleRequestPanelMouseUp = useCallback(() => {
-        isResizingRequestPanel.current = false;
-        window.removeEventListener('mousemove', handleRequestPanelMouseMove);
-        window.removeEventListener('mouseup', handleRequestPanelMouseUp);
+    const handleVerticalMouseUp = useCallback(() => {
+        isResizingVertical.current = false;
+        window.removeEventListener('mousemove', handleVerticalMouseMove);
+        window.removeEventListener('mouseup', handleVerticalMouseUp);
         document.body.style.cursor = 'default';
         document.body.style.userSelect = 'auto';
-    }, [handleRequestPanelMouseMove]);
-    
-    const handleRequestPanelMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
+    }, [handleVerticalMouseMove]);
+
+    const handleVerticalMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
         e.preventDefault();
-        isResizingRequestPanel.current = true;
+        isResizingVertical.current = true;
         document.body.style.cursor = 'row-resize';
         document.body.style.userSelect = 'none';
-        window.addEventListener('mousemove', handleRequestPanelMouseMove);
-        window.addEventListener('mouseup', handleRequestPanelMouseUp);
+        window.addEventListener('mousemove', handleVerticalMouseMove);
+        window.addEventListener('mouseup', handleVerticalMouseUp);
     };
-    
-    useEffect(() => {
-        return () => {
-            window.removeEventListener('mousemove', handleRequestPanelMouseMove);
-            window.removeEventListener('mouseup', handleRequestPanelMouseUp);
-        };
-    }, [handleRequestPanelMouseMove, handleRequestPanelMouseUp]);
-    // --- END PANEL RESIZING LOGIC ---
 
-
-    const activeResponseData = activeRequestId ? responses[activeRequestId] : null;
-    const isLoading = loadingItemId === activeRequestId;
-
-    // --- Calculate active variables for highlighting ---
-    const activeEnvironment = environments.find(env => env.id === activeEnvironmentId);
-    const activeVariables = activeEnvironment
-        ? activeEnvironment.values.filter(v => v.enabled).map(v => v.key)
-        : [];
-
-    const requestPanelComponent = activeRequestItem && (
-        <RequestPanel
-            key={activeRequestId}
-            item={activeRequestItem}
-            response={activeResponseData?.response}
-            loading={isLoading}
-            onSend={handleSendRequest}
-            onUpdateItem={handleUpdateItem}
-            onGenerateTests={handleGenerateTests}
-            layoutMode={layoutMode}
-            setLayoutMode={setLayoutMode}
-            activeVariables={activeVariables}
-        />
-    );
-
-    const responsePanelComponent = activeRequestItem && (
-        <ResponsePanel 
-            response={activeResponseData?.response} 
-            loading={isLoading} 
-            testResults={activeResponseData?.testResults || []} 
-        />
-    );
-
+    // --- START JSX ---
     return (
         <>
             <Layout
@@ -835,7 +619,7 @@ const App: React.FC = () => {
                         onNewRequest={handleNewRequest}
                         onNewFolder={handleNewFolder}
                         onDeleteItem={handleDeleteItem}
-                        onExport={handleExport}
+                        onExport={() => setExportModalOpen(true)}
                         openFolders={openFolders}
                         setOpenFolders={setOpenFolders}
                         selectedIds={selectedIds}
@@ -851,117 +635,93 @@ const App: React.FC = () => {
                 isSidebarOpen={isSidebarOpen}
                 setIsSidebarOpen={setIsSidebarOpen}
             >
-                <div className="flex flex-col h-full w-full">
-                    {/* Mobile-only Header */}
-                    <header className="md:hidden flex items-center justify-between p-2 bg-gray-900 border-b border-gray-700 flex-shrink-0">
+                <div className="flex-1 flex flex-col overflow-hidden relative" ref={mainContentRef}>
+                    <div className="md:hidden flex items-center p-2 border-b border-gray-700 bg-gray-800 flex-shrink-0">
                         <button onClick={() => setIsSidebarOpen(true)} className="p-2 text-gray-300">
-                            <MenuIcon className="w-6 h-6" />
+                           <MenuIcon className="w-6 h-6" />
                         </button>
-                        <h2 className="font-semibold text-lg truncate px-2">
-                            {activeRequestItem?.name || "API Client"}
-                        </h2>
-                        {/* Spacer to keep title centered */}
-                        <div className="w-10"></div>
-                    </header>
-                    
-                    <main className="flex-1 overflow-hidden">
-                        {activeRequestItem && activeRequestItem.request ? (
-                            <>
-                                {/* Desktop Split View */}
-                                <div ref={mainPanelRef} className={`hidden md:flex flex-1 overflow-hidden h-full ${layoutMode === 'horizontal' ? 'flex-col' : 'flex-row'}`}>
-                                    {layoutMode === 'horizontal' ? (
-                                        <>
-                                            <div className="overflow-hidden" style={{ height: `${requestPanelHeight}px` }}>
-                                               {requestPanelComponent}
-                                            </div>
-                                            <div
-                                                onMouseDown={handleRequestPanelMouseDown}
-                                                className="flex-shrink-0 bg-gray-700 w-full h-[2px] cursor-row-resize hover:bg-blue-500 transition-colors"
-                                            />
-                                            <div className="overflow-hidden flex-1">
-                                                {responsePanelComponent}
-                                            </div>
-                                        </>
-                                    ) : (
-                                        <>
-                                            <div className="overflow-hidden w-1/2">
-                                               {requestPanelComponent}
-                                            </div>
-                                            <div className="flex-shrink-0 bg-gray-700 h-full w-[1px]"></div>
-                                            <div className="overflow-hidden w-1/2">
-                                                {responsePanelComponent}
-                                            </div>
-                                        </>
-                                    )}
-                                </div>
-                                {/* Mobile Tabbed View */}
-                                <div className="md:hidden flex flex-col h-full">
-                                    <div className="flex border-b border-gray-700 flex-shrink-0">
-                                        <button onClick={() => setMainView('request')} className={`flex-1 py-2 text-center text-sm font-medium ${mainView === 'request' ? 'bg-gray-700 text-blue-400' : 'bg-gray-800 text-gray-300'}`}>Request</button>
-                                        <button onClick={() => setMainView('response')} className={`flex-1 py-2 text-center text-sm font-medium ${mainView === 'response' ? 'bg-gray-700 text-blue-400' : 'bg-gray-800 text-gray-300'}`}>Response</button>
-                                    </div>
-                                    <div className="flex-1 overflow-y-auto">
-                                        {mainView === 'request' ? requestPanelComponent : responsePanelComponent}
-                                    </div>
-                                </div>
-                            </>
-                        ) : (
-                            <div className="flex flex-col items-center justify-center h-full text-center text-gray-500 px-4 sm:px-10">
-                                <div className="bg-yellow-900/30 border border-yellow-700 text-yellow-300 px-4 py-3 rounded-lg mb-8 max-w-2xl text-sm">
-                                    <h3 className="font-bold text-yellow-200 mb-2">¡Atención! Recomendaciones de Uso</h3>
-                                    <p className="mb-2">
-                                        Todo su progreso se guarda en el almacenamiento local de su navegador. Si limpia la caché o el almacenamiento de su navegador, <strong className="font-semibold">PERDERÁ TODOS SUS DATOS</strong>.
-                                    </p>
-                                    <p className="mb-2">
-                                        Se recomienda encarecidamente <strong className="font-semibold">exportar su colección regularmente</strong> como respaldo para evitar la pérdida de trabajo.
-                                    </p>
-                                    <p className="mb-2">
-                                        Esta herramienta está diseñada como un recurso ligero y rápido para pruebas y generación de scripts, no como un sustituto completo de herramientas robustas como Postman o Insomnia.
-                                    </p>
-                                    <p>
-                                        Aparte de rápido, simple y ligero, uno de los objetivos es poder realizar pruebas rápidas incluso desde un celular sin necesidad de instalar aplicaciones.
-                                    </p>
-                                </div>
-                                <p>Seleccione una solicitud o cree una nueva, tambien puede importar un cURL o una colección (Postman, Swagger) para comenzar.</p>
+                        <span className="font-semibold ml-2 truncate">{activeRequestItem ? activeRequestItem.name : (collection?.info.name || "Simple Request Tool")}</span>
+                        {activeRequestItem && (
+                             <div className="ml-auto flex items-center space-x-2">
+                                <button onClick={() => setMainView('request')} className={`px-3 py-1 text-sm rounded ${mainView === 'request' ? 'bg-blue-600' : 'bg-gray-700'}`}>Request</button>
+                                <button onClick={() => setMainView('response')} className={`px-3 py-1 text-sm rounded ${mainView === 'response' ? 'bg-blue-600' : 'bg-gray-700'}`}>Response</button>
                             </div>
                         )}
-                    </main>
+                    </div>
+                    
+                    {activeRequestItem ? (
+                        <div className={`flex flex-1 overflow-hidden ${layoutMode === 'vertical' ? 'flex-col' : 'flex-row'}`}>
+                            <div 
+                                className={`relative ${mainView === 'request' || window.innerWidth >= 768 ? 'flex' : 'hidden'} md:flex flex-col overflow-hidden`}
+                                style={layoutMode === 'vertical' ? { height: `${requestPanelHeight}px` } : { flexBasis: '50%' }}
+                            >
+                                <RequestPanel
+                                    key={activeRequestItem.id}
+                                    item={activeRequestItem}
+                                    response={activeResponseData?.response}
+                                    loading={loadingItemId === activeRequestItem.id}
+                                    onSend={handleSendRequest}
+                                    onUpdateItem={handleUpdateItem}
+                                    onGenerateTests={handleGenerateTests}
+                                    layoutMode={layoutMode}
+                                    setLayoutMode={setLayoutMode}
+                                    activeVariables={Object.keys(activeEnvironmentVariables)}
+                                />
+                            </div>
+
+                             {layoutMode === 'vertical' && (
+                                <div
+                                    onMouseDown={handleVerticalMouseDown}
+                                    className="h-2 w-full cursor-row-resize bg-gray-900 hover:bg-gray-700 transition-colors duration-200 hidden md:flex"
+                                    title="Drag to resize"
+                                ></div>
+                            )}
+
+                            <div 
+                                className={`relative ${mainView === 'response' || window.innerWidth >= 768 ? 'flex' : 'hidden'} md:flex flex-col flex-1 overflow-hidden`}
+                            >
+                               <ResponsePanel
+                                    loading={loadingItemId === activeRequestItem.id}
+                                    response={activeResponseData?.response}
+                                    testResults={activeResponseData?.testResults || []}
+                                />
+                            </div>
+
+                        </div>
+                    ) : (
+                        <div className="flex-1 flex items-center justify-center text-center text-gray-500 p-8">
+                            <div>
+                                <h2 className="text-2xl font-bold mb-4">Bienvenido a la herramienta de solicitud</h2>
+                                <p>Seleccione un requerimiento del panel izquierdo o importe una colección para comenzar.</p>
+                                <button
+                                    onClick={() => setImportModalOpen(true)}
+                                    className="mt-6 px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded text-white font-semibold flex items-center mx-auto"
+                                >
+                                    <ImportIcon className="w-5 h-5 mr-2" />
+                                    Importar Colección
+                                </button>
+                            </div>
+                        </div>
+                    )}
                 </div>
             </Layout>
-            <Modal 
-                isOpen={isErrorModalOpen} 
-                onClose={() => setErrorModalOpen(false)} 
-                title="Contexto Insuficiente para la IA"
-            >
-                <p>Para generar pruebas de alta calidad, la IA necesita el contexto de una respuesta exitosa.</p>
-                <p className="mt-4">Por favor, ejecuta al menos una petición exitosa (preferiblemente un "happy path") antes de intentar generar las pruebas.</p>
-                <div className="flex justify-end mt-6">
-                    <button 
-                        onClick={() => setErrorModalOpen(false)}
-                        className="px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded text-white font-semibold"
-                    >
-                        Entendido
-                    </button>
-                </div>
-            </Modal>
-            <ImportModal 
-                isOpen={isImportModalOpen} 
-                onClose={() => setImportModalOpen(false)} 
+
+            {/* --- MODALS --- */}
+            <ImportModal
+                isOpen={isImportModalOpen}
+                onClose={() => setImportModalOpen(false)}
                 onImportText={handleImportText}
-                onImportFile={handleFileImport}
+                onImportFile={handleImportFile}
             />
             <ExportModal
                 isOpen={isExportModalOpen}
                 onClose={() => setExportModalOpen(false)}
                 onExport={handleConfirmExport}
             />
-             <ApiKeyModal
+            <ApiKeyModal
                 isOpen={isApiKeyModalOpen}
                 onClose={() => setApiKeyModalOpen(false)}
-                onSave={(key) => {
-                    setApiKey(key);
-                    setApiKeyModalOpen(false);
-                }}
+                onSave={(key) => { setApiKey(key); setApiKeyModalOpen(false); }}
                 currentApiKey={apiKey}
             />
             <ConfirmationModal
@@ -970,13 +730,13 @@ const App: React.FC = () => {
                 onConfirm={handleConfirmDelete}
                 title="Confirmar eliminación"
             >
-                <p>¿Estás seguro de que quieres eliminar este elemento? Esta acción no se puede deshacer.</p>
+                ¿Está seguro de que desea eliminar este elemento? Esta acción no se puede deshacer.
             </ConfirmationModal>
-            <EnvironmentModal 
+             <EnvironmentModal
                 isOpen={isEnvironmentModalOpen}
                 onClose={() => setIsEnvironmentModalOpen(false)}
                 environments={environments}
-                onUpdateEnvironments={setEnvironments}
+                onUpdateEnvironments={handleUpdateEnvironments}
             />
         </>
     );
