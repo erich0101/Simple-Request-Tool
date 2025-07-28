@@ -807,7 +807,7 @@ const App: React.FC = () => {
                     </div>
                     
                     {activeRequestItem ? (
-                        <div className={`flex flex-1 overflow-hidden ${layoutMode === 'horizontal' ? 'flex-col' : 'flex-row'}`}>
+                        <div className={`flex flex-1 overflow-hidden ${layoutMode === 'vertical' ? 'flex-col' : 'flex-row'}`}>
                             <div 
                                 className={`relative ${mainView === 'request' || window.innerWidth >= 768 ? 'flex' : 'hidden'} md:flex flex-col overflow-hidden`}
                                 style={layoutMode === 'vertical' ? { height: `${requestPanelHeight}px` } : { flexBasis: '50%' }}
