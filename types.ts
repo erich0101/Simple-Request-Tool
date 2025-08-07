@@ -1,3 +1,4 @@
+
 export interface PostmanCollection {
     info: {
         _postman_id: string;
@@ -56,6 +57,12 @@ export interface ResponseData {
     requestHeaders?: Record<string, string>;
     requestTimestamp?: number;
     responseTime?: number;
+    downloadInfo?: {
+        url: string;
+        filename: string;
+        type: string;
+        size: number;
+    };
 }
 
 export interface Environment {
