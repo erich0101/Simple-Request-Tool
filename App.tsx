@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { PostmanCollection, PostmanItem, PostmanRequest, TestResult, ResponseData, Environment, EnvironmentValue } from './types';
 import Layout from './components/Layout';
@@ -19,6 +20,7 @@ import EnvironmentModal from './components/EnvironmentModal';
 import NewEnvironmentModal from './components/NewEnvironmentModal';
 import { generateCurlCommand } from './services/curlGenerator';
 import ReportModal from './components/ReportModal';
+import TestReportModal from './components/TestReportModal';
 
 // --- START HELPER FUNCTIONS ---
 const getActiveEnvironmentVariables = (environments: Environment[], activeEnvironmentId: string | null): Record<string, string> => {
@@ -87,6 +89,7 @@ const App: React.FC = () => {
     const [isNewEnvModalOpen, setNewEnvModalOpen] = useState(false);
     const [varsForNewEnv, setVarsForNewEnv] = useState<Record<string, string>>({});
     const [reportModalItemId, setReportModalItemId] = useState<string | null>(null);
+    const [testReportItemId, setTestReportItemId] = useState<string | null>(null);
 
 
     // --- Environment State ---
@@ -247,6 +250,36 @@ const App: React.FC = () => {
 
     // --- START HANDLERS ---
     
+    const handleVariableUpdates = useCallback((originalVars: Record<string, string>, updatedVars: Record<string, string>) => {
+        const hasVariablesChanged = JSON.stringify(originalVars) !== JSON.stringify(updatedVars);
+        if (!hasVariablesChanged) return;
+
+        if (activeEnvironmentId) {
+            setEnvironments(prevEnvs => prevEnvs.map(env => {
+                if (env.id === activeEnvironmentId) {
+                    const newValues = [...env.values];
+                    const existingKeys = new Set(env.values.map(v => v.key));
+
+                    for (const key in updatedVars) {
+                        if (existingKeys.has(key)) {
+                            const index = newValues.findIndex(v => v.key === key);
+                            if (index !== -1 && newValues[index].value !== updatedVars[key]) {
+                                newValues[index] = { ...newValues[index], value: updatedVars[key] };
+                            }
+                        } else {
+                            newValues.push({ key: key, value: updatedVars[key], enabled: true });
+                        }
+                    }
+                    return { ...env, values: newValues };
+                }
+                return env;
+            }));
+        } else {
+            setVarsForNewEnv(updatedVars);
+            setNewEnvModalOpen(true);
+        }
+    }, [activeEnvironmentId, setEnvironments, setVarsForNewEnv, setNewEnvModalOpen]);
+
     const handleSendRequest = async (item: PostmanItem, files?: Record<string, File>) => {
         if (!item.request?.url?.raw) return;
         setLoadingItemId(item.id!);
@@ -305,60 +338,69 @@ const App: React.FC = () => {
                 responseHeaders[key] = value;
             });
             
-            let responseBody: any;
-            const contentType = res.headers.get('content-type');
-            if (contentType && contentType.includes('application/json')) {
-                try {
-                    responseBody = await res.json();
-                } catch {
-                     responseBody = await res.text();
+            const contentDisposition = res.headers.get('content-disposition');
+            if (contentDisposition && contentDisposition.includes('attachment')) {
+                const blob = await res.blob();
+                
+                let filename = 'downloaded-file';
+                const filenameMatch = /filename="?([^"]+)"?/.exec(contentDisposition);
+                if (filenameMatch && filenameMatch[1]) {
+                    filename = filenameMatch[1];
                 }
+
+                const downloadUrl = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = downloadUrl;
+                a.download = filename;
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+                window.URL.revokeObjectURL(downloadUrl);
+
+                const fileInfoBody = `Archivo descargado exitosamente.\nNombre: ${filename}\nTamaño: ${blob.size} bytes\nTipo: ${blob.type || 'desconocido'}`;
+                
+                const responseData = {
+                    status: res.status,
+                    statusText: res.statusText,
+                    headers: responseHeaders,
+                    body: fileInfoBody,
+                };
+                
+                const testScript = item.event?.find(e => e.listen === 'test')?.script.exec.join('\n') || '';
+                const { testResults, updatedVariables } = await runTests(testScript, res, fileInfoBody, variables);
+                
+                handleVariableUpdates(variables, updatedVariables);
+                
+                setResponses(prev => ({...prev, [item.id!]: { response: responseData, testResults, requestTimestamp: startTime, responseTime, requestHeaders: requestHeadersForReport }}));
+                setMainView('response');
             } else {
-                responseBody = await res.text();
-            }
-            
-            const responseData = {
-                status: res.status,
-                statusText: res.statusText,
-                headers: responseHeaders,
-                body: responseBody
-            };
-            
-            const testScript = item.event?.find(e => e.listen === 'test')?.script.exec.join('\n') || '';
-            const { testResults, updatedVariables } = await runTests(testScript, res, responseBody, variables);
-            
-            const hasVariablesChanged = JSON.stringify(variables) !== JSON.stringify(updatedVariables);
-
-            if (hasVariablesChanged) {
-                if (activeEnvironmentId) {
-                    setEnvironments(prevEnvs => prevEnvs.map(env => {
-                        if (env.id === activeEnvironmentId) {
-                            const newValues = [...env.values];
-                            const existingKeys = new Set(env.values.map(v => v.key));
-
-                            for (const key in updatedVariables) {
-                                if (existingKeys.has(key)) {
-                                    const index = newValues.findIndex(v => v.key === key);
-                                    if (index !== -1 && newValues[index].value !== updatedVariables[key]) {
-                                        newValues[index] = { ...newValues[index], value: updatedVariables[key] };
-                                    }
-                                } else {
-                                    newValues.push({ key: key, value: updatedVariables[key], enabled: true });
-                                }
-                            }
-                            return { ...env, values: newValues };
-                        }
-                        return env;
-                    }));
+                let responseBody: any;
+                const contentType = res.headers.get('content-type');
+                if (contentType && contentType.includes('application/json')) {
+                    try {
+                        responseBody = await res.json();
+                    } catch {
+                         responseBody = await res.text();
+                    }
                 } else {
-                    setVarsForNewEnv(updatedVariables);
-                    setNewEnvModalOpen(true);
+                    responseBody = await res.text();
                 }
+                
+                const responseData = {
+                    status: res.status,
+                    statusText: res.statusText,
+                    headers: responseHeaders,
+                    body: responseBody
+                };
+                
+                const testScript = item.event?.find(e => e.listen === 'test')?.script.exec.join('\n') || '';
+                const { testResults, updatedVariables } = await runTests(testScript, res, responseBody, variables);
+                
+                handleVariableUpdates(variables, updatedVariables);
+                
+                setResponses(prev => ({...prev, [item.id!]: { response: responseData, testResults, requestTimestamp: startTime, responseTime, requestHeaders: requestHeadersForReport }}));
+                setMainView('response');
             }
-            
-            setResponses(prev => ({...prev, [item.id!]: { response: responseData, testResults, requestTimestamp: startTime, responseTime, requestHeaders: requestHeadersForReport }}));
-            setMainView('response');
-
         } catch (error) {
              const endTime = Date.now();
              const responseTime = endTime - startTime;
@@ -761,6 +803,9 @@ const App: React.FC = () => {
     const reportModalItem = reportModalItemId ? findItemById(collection?.item || [], reportModalItemId) : null;
     const reportModalResponseData = reportModalItemId ? responses[reportModalItemId] : null;
 
+    const testReportModalItem = testReportItemId ? findItemById(collection?.item || [], testReportItemId) : null;
+    const testReportModalResponseData = testReportItemId ? responses[testReportItemId] : null;
+
     return (
         <>
             <Layout
@@ -841,6 +886,7 @@ const App: React.FC = () => {
                                     loading={loadingItemId === activeRequestItem.id}
                                     responseData={activeResponseData}
                                     onOpenReport={() => setReportModalItemId(activeRequestItem.id)}
+                                    onOpenTestReport={() => setTestReportItemId(activeRequestItem.id)}
                                 />
                             </div>
 
@@ -908,6 +954,14 @@ const App: React.FC = () => {
                 onClose={() => setReportModalItemId(null)}
                 item={reportModalItem}
                 responseData={reportModalResponseData}
+            />
+            <TestReportModal
+                isOpen={!!testReportItemId}
+                onClose={() => setTestReportItemId(null)}
+                item={testReportModalItem}
+                responseData={testReportModalResponseData}
+                apiKey={apiKey}
+                onOpenApiKeyModal={() => setApiKeyModalOpen(true)}
             />
         </>
     );
