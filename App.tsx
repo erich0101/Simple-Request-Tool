@@ -351,25 +351,61 @@ const App: React.FC = () => {
                 const downloadUrl = window.URL.createObjectURL(blob);
                 
                 let filename = 'download';
-                // Try to get filename from content-disposition first
+
+                // 1. Try to extract filename from Content-Disposition header (robustly)
                 if (contentDisposition) {
-                    const filenameMatch = /filename="?([^"]+)"?/.exec(contentDisposition);
-                    if (filenameMatch && filenameMatch[1]) {
-                        filename = filenameMatch[1];
+                    let match;
+                    // Handles filename*=UTF-8''... (RFC 5987) for unicode characters
+                    match = /filename\*=\s*UTF-8''([\w%\-\.]+)/i.exec(contentDisposition);
+                    if (match && match[1]) {
+                        try {
+                            filename = decodeURIComponent(match[1]);
+                        } catch (e) {
+                            filename = match[1]; // Fallback to raw value if decoding fails
+                        }
+                    } else {
+                        // Handles filename="..." (standard)
+                        match = /filename="([^"]+)"/i.exec(contentDisposition);
+                        if (match && match[1]) {
+                            filename = match[1];
+                        } else {
+                            // Handles filename=... (unquoted)
+                             match = /filename=([^;]+)/i.exec(contentDisposition);
+                             if (match && match[1]) {
+                                // Trim whitespace and quotes from the unquoted filename
+                                filename = match[1].trim().replace(/^"|"$/g, '');
+                             }
+                        }
                     }
-                } else {
-                    // Fallback 1: try to get from URL path
+                }
+                
+                // 2. Fallback to URL path if filename was not found in headers
+                if (filename === 'download') {
                     try {
                        const path = new URL(url).pathname;
                        const lastSegment = path.substring(path.lastIndexOf('/') + 1);
-                       if (lastSegment) filename = lastSegment;
+                       if (lastSegment) {
+                           filename = lastSegment;
+                       }
                     } catch (e) { /* ignore URL parsing errors */ }
                 }
 
-                // If filename still has no extension, try to add one from mime type
+                // 3. Fallback to guessing extension from MIME type if filename has no extension
                 if (!filename.includes('.')) {
-                    const ext = contentType.split('/')[1]?.split(';')[0];
-                    if (ext) {
+                    const commonExtensions: Record<string, string> = {
+                        'application/pdf': 'pdf',
+                        'application/zip': 'zip',
+                        'application/gzip': 'gz',
+                        'image/jpeg': 'jpg',
+                        'image/png': 'png',
+                        'image/gif': 'gif',
+                        'text/plain': 'txt',
+                        'text/csv': 'csv',
+                    };
+                    const mainContentType = contentType.split(';')[0];
+                    const ext = commonExtensions[mainContentType] || mainContentType.split('/')[1];
+                    
+                    if (ext && /^[a-z0-9]+$/.test(ext)) { // simple validation for extension
                         filename = `${filename}.${ext}`;
                     }
                 }
