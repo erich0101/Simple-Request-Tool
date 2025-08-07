@@ -339,17 +339,42 @@ const App: React.FC = () => {
             });
             
             const contentDisposition = res.headers.get('content-disposition');
-            if (contentDisposition && contentDisposition.includes('attachment')) {
+            const contentType = res.headers.get('content-type') || '';
+
+            // More robust file detection: check content-disposition OR a non-text/json content-type
+            const isAttachment = contentDisposition?.includes('attachment');
+            // Treat as a file if it has attachment header or if the content type is not a typical text/json format.
+            const isBinaryType = contentType && !contentType.includes('application/json') && !contentType.startsWith('text/');
+
+            if (isAttachment || isBinaryType) {
                 const blob = await res.blob();
                 const downloadUrl = window.URL.createObjectURL(blob);
                 
-                let filename = 'downloaded-file';
-                const filenameMatch = /filename="?([^"]+)"?/.exec(contentDisposition);
-                if (filenameMatch && filenameMatch[1]) {
-                    filename = filenameMatch[1];
+                let filename = 'download';
+                // Try to get filename from content-disposition first
+                if (contentDisposition) {
+                    const filenameMatch = /filename="?([^"]+)"?/.exec(contentDisposition);
+                    if (filenameMatch && filenameMatch[1]) {
+                        filename = filenameMatch[1];
+                    }
+                } else {
+                    // Fallback 1: try to get from URL path
+                    try {
+                       const path = new URL(url).pathname;
+                       const lastSegment = path.substring(path.lastIndexOf('/') + 1);
+                       if (lastSegment) filename = lastSegment;
+                    } catch (e) { /* ignore URL parsing errors */ }
                 }
 
-                const fileInfoBody = `Un archivo está listo para ser descargado.`;
+                // If filename still has no extension, try to add one from mime type
+                if (!filename.includes('.')) {
+                    const ext = contentType.split('/')[1]?.split(';')[0];
+                    if (ext) {
+                        filename = `${filename}.${ext}`;
+                    }
+                }
+
+                const fileInfoBody = `Archivo descargable detectado: ${filename} (${(blob.size / 1024).toFixed(2)} KB)`;
                 
                 const responsePayload = {
                     status: res.status,
@@ -384,15 +409,16 @@ const App: React.FC = () => {
                 setMainView('response');
             } else {
                 let responseBody: any;
-                const contentType = res.headers.get('content-type');
+                const textBody = await res.text();
                 if (contentType && contentType.includes('application/json')) {
                     try {
-                        responseBody = await res.json();
+                        responseBody = JSON.parse(textBody);
                     } catch {
-                         responseBody = await res.text();
+                         // If JSON parsing fails, keep it as text. This can happen with malformed JSON.
+                         responseBody = textBody;
                     }
                 } else {
-                    responseBody = await res.text();
+                    responseBody = textBody;
                 }
                 
                 const responseData = {
