@@ -1,4 +1,5 @@
 
+
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { PostmanCollection, PostmanItem, PostmanRequest, TestResult, ResponseData, Environment, EnvironmentValue } from './types';
 import Layout from './components/Layout';
@@ -101,9 +102,15 @@ const App: React.FC = () => {
     const [mainView, setMainView] = useState<'request' | 'response'>('request');
 
 
-    const [layoutMode, setLayoutMode] = useState<'horizontal' | 'vertical'>(
-        () => (localStorage.getItem('miniPostmanLayoutMode') as 'horizontal' | 'vertical') || 'horizontal'
-    );
+    const [layoutMode, setLayoutMode] = useState<'horizontal' | 'vertical'>(() => {
+        const savedLayoutMode = localStorage.getItem('miniPostmanLayoutMode');
+        // Validate that the saved value is one of the allowed modes
+        if (savedLayoutMode === 'horizontal' || savedLayoutMode === 'vertical') {
+            return savedLayoutMode;
+        }
+        // Otherwise, return the default
+        return 'vertical';
+    });
     const [openFolders, setOpenFolders] = useState<Record<string, boolean>>({});
     const [sidebarWidth, setSidebarWidth] = useState<number>(() => {
         const savedWidth = localStorage.getItem('miniPostmanSidebarWidth');
