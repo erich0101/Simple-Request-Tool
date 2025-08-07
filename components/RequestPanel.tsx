@@ -1,5 +1,4 @@
 
-
 import React, { useState, useEffect } from 'react';
 import { PostmanItem, PostmanRequest } from '../types';
 import CodeEditor from './CodeEditor';
@@ -17,18 +16,29 @@ interface RequestPanelProps {
     activeVariables?: string[];
 }
 
-type Tab = 'Headers' | 'Body' | 'Tests';
+const COMMON_HEADERS = [
+  'Accept',
+  'Accept-Encoding',
+  'Accept-Language',
+  'Authorization',
+  'Cache-Control',
+  'Content-Type',
+  'Cookie',
+  'Origin',
+  'Referer',
+  'User-Agent',
+  'X-Api-Key',
+  'X-Requested-With',
+];
 
-const KeyValueInput: React.FC<{
-    k: string, v: string, onUpdate: (k: string, v: string) => void, onRemove: () => void, placeholderKey: string, placeholderValue: string
-}> = ({ k, v, onUpdate, onRemove, placeholderKey, placeholderValue }) => (
-    <div className="flex items-center space-x-2 mb-2">
-        <input type="text" value={k} onChange={e => onUpdate(e.target.value, v)} placeholder={placeholderKey} className="flex-1 bg-gray-700 border border-gray-600 rounded px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"/>
-        <input type="text" value={v} onChange={e => onUpdate(k, e.target.value)} placeholder={placeholderValue} className="flex-1 bg-gray-700 border border-gray-600 rounded px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"/>
-        <button onClick={onRemove} className="p-1 text-gray-400 hover:text-red-500"><TrashIcon className="w-5 h-5"/></button>
-    </div>
-);
-
+const CONTENT_TYPE_SUGGESTIONS = [
+  'application/json',
+  'application/xml',
+  'application/x-www-form-urlencoded',
+  'multipart/form-data',
+  'text/html',
+  'text/plain',
+];
 
 const RequestPanel: React.FC<RequestPanelProps> = ({ item, response, loading, onSend, onUpdateItem, onGenerateTests, layoutMode, setLayoutMode, activeVariables }) => {
     const [activeTab, setActiveTab] = useState<Tab>('Body');
@@ -36,6 +46,7 @@ const RequestPanel: React.FC<RequestPanelProps> = ({ item, response, loading, on
     const [formFiles, setFormFiles] = useState<Record<string, File>>({});
     const [bodyEditorKey, setBodyEditorKey] = useState(Date.now());
 
+    type Tab = 'Headers' | 'Body' | 'Tests';
 
     useEffect(() => {
         setCurrentItem(item);
@@ -189,8 +200,32 @@ const RequestPanel: React.FC<RequestPanelProps> = ({ item, response, loading, on
             case 'Headers':
                 return (
                     <div className="p-4 overflow-y-auto h-full">
+                         <datalist id="common-headers">
+                            {COMMON_HEADERS.map(h => <option key={h} value={h} />)}
+                        </datalist>
+                        <datalist id="content-type-suggestions">
+                            {CONTENT_TYPE_SUGGESTIONS.map(ct => <option key={ct} value={ct} />)}
+                        </datalist>
                         {(request.header || []).map((h, i) => 
-                            <KeyValueInput key={i} k={h.key} v={h.value} onUpdate={(k, v) => handleHeaderChange(i, k, v)} onRemove={() => handleRemoveHeader(i)} placeholderKey="Header" placeholderValue="Value"/>
+                            <div key={i} className="flex items-center space-x-2 mb-2">
+                                <input
+                                    type="text"
+                                    value={h.key}
+                                    onChange={e => handleHeaderChange(i, e.target.value, h.value)}
+                                    placeholder="Header"
+                                    className="flex-1 bg-gray-700 border border-gray-600 rounded px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
+                                    list="common-headers"
+                                />
+                                <input
+                                    type="text"
+                                    value={h.value}
+                                    onChange={e => handleHeaderChange(i, h.key, e.target.value)}
+                                    placeholder="Value"
+                                    className="flex-1 bg-gray-700 border border-gray-600 rounded px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
+                                    list={h.key.toLowerCase() === 'content-type' ? "content-type-suggestions" : undefined}
+                                />
+                                <button onClick={() => handleRemoveHeader(i)} className="p-1 text-gray-400 hover:text-red-500"><TrashIcon className="w-5 h-5"/></button>
+                            </div>
                         )}
                         <button onClick={handleAddHeader} className="flex items-center text-sm text-blue-400 hover:text-blue-300 mt-2">
                             <PlusIcon className="w-4 h-4 mr-1"/> Add Header
