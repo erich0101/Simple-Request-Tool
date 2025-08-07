@@ -341,6 +341,7 @@ const App: React.FC = () => {
             const contentDisposition = res.headers.get('content-disposition');
             if (contentDisposition && contentDisposition.includes('attachment')) {
                 const blob = await res.blob();
+                const downloadUrl = window.URL.createObjectURL(blob);
                 
                 let filename = 'downloaded-file';
                 const filenameMatch = /filename="?([^"]+)"?/.exec(contentDisposition);
@@ -348,18 +349,9 @@ const App: React.FC = () => {
                     filename = filenameMatch[1];
                 }
 
-                const downloadUrl = window.URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = downloadUrl;
-                a.download = filename;
-                document.body.appendChild(a);
-                a.click();
-                a.remove();
-                window.URL.revokeObjectURL(downloadUrl);
-
-                const fileInfoBody = `Archivo descargado exitosamente.\nNombre: ${filename}\nTamaño: ${blob.size} bytes\nTipo: ${blob.type || 'desconocido'}`;
+                const fileInfoBody = `Un archivo está listo para ser descargado.`;
                 
-                const responseData = {
+                const responsePayload = {
                     status: res.status,
                     statusText: res.statusText,
                     headers: responseHeaders,
@@ -371,7 +363,24 @@ const App: React.FC = () => {
                 
                 handleVariableUpdates(variables, updatedVariables);
                 
-                setResponses(prev => ({...prev, [item.id!]: { response: responseData, testResults, requestTimestamp: startTime, responseTime, requestHeaders: requestHeadersForReport }}));
+                const downloadInfo = {
+                    url: downloadUrl,
+                    filename: filename,
+                    type: blob.type,
+                    size: blob.size,
+                };
+
+                setResponses(prev => ({
+                    ...prev, 
+                    [item.id!]: { 
+                        response: responsePayload, 
+                        testResults, 
+                        requestTimestamp: startTime, 
+                        responseTime, 
+                        requestHeaders: requestHeadersForReport,
+                        downloadInfo: downloadInfo
+                    }
+                }));
                 setMainView('response');
             } else {
                 let responseBody: any;
