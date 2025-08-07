@@ -1,7 +1,7 @@
 
 
 import { GoogleGenAI, Type } from "@google/genai";
-import { PostmanRequest } from '../types';
+import { PostmanItem, PostmanRequest, ResponseData } from '../types';
 
 const schema = {
   type: Type.OBJECT,
@@ -145,5 +145,122 @@ ${userInstructions}
     } catch (error) {
         console.error("Gemini API Error:", error);
         throw new Error(`Error al generar los casos de prueba: ${error instanceof Error ? error.message : 'Error desconocido'}`);
+    }
+};
+
+
+export const generateTestExecutionReport = async (item: PostmanItem, responseData: ResponseData, apiKey: string): Promise<string> => {
+    if (!apiKey) {
+        throw new Error("API Key not provided. Please set your Gemini API key.");
+    }
+    const ai = new GoogleGenAI({ apiKey });
+
+    // Prepare data for the prompt
+    const { request } = item;
+    const { testResults, requestTimestamp, responseTime, requestHeaders } = responseData;
+    const { status, statusText, body: responseBody, headers: responseHeaders } = responseData.response;
+
+    const passedCount = testResults.filter(r => r.passed).length;
+    const totalCount = testResults.length;
+    
+    const getPayloadString = (req?: PostmanRequest): string => {
+        if (!req?.body) return 'N/A';
+        switch (req.body.mode) {
+            case 'raw':
+                if (!req.body.raw) return '(Empty)';
+                try {
+                    return JSON.stringify(JSON.parse(req.body.raw), null, 2);
+                } catch {
+                    return req.body.raw;
+                }
+            case 'formdata':
+                return (req.body.formdata || []).map(p => `${p.key}: ${p.type === 'file' ? `[File: ${p.value}]` : p.value}`).join('\n');
+            default: return 'N/A';
+        }
+    };
+    
+    const dataForAI = {
+        requestName: item.name,
+        overallStatus: passedCount === totalCount && totalCount > 0 ? 'PASSED' : 'FAILED',
+        passedCount,
+        totalCount,
+        timestamp: requestTimestamp ? new Date(requestTimestamp).toLocaleString() : 'N/A',
+        method: request?.method,
+        url: request?.url?.raw,
+        responseTime: `${responseTime}ms`,
+        requestPayload: getPayloadString(request),
+        requestHeaders: JSON.stringify(requestHeaders, null, 2),
+        responseStatusCode: status,
+        responseStatusText: statusText,
+        responseBody: typeof responseBody === 'object' ? JSON.stringify(responseBody, null, 2) : String(responseBody),
+        responseHeaders: JSON.stringify(responseHeaders, null, 2),
+        detailedTestResults: testResults.map(({ name, passed, error }) => ({ name, passed, error: error || '' })),
+    };
+
+const prompt = `
+Eres un analista de QA y redactor técnico experto. Tu tarea es generar un informe de ejecución de pruebas de APIs profesional, claro y en español, basado en los siguientes datos.
+
+Debes estructurar el informe en secciones con títulos claros. El formato es similar a Markdown pero sin tablas Markdown, solo listas y bloques de código cuando sea necesario.
+
+NO incluyas encabezados, comentarios o explicaciones fuera del contenido del informe.
+
+### PLANTILLA A USAR
+
+# Informe de Ejecución de Pruebas
+
+## 1. Resumen General
+- **Nombre de la Prueba:** ${dataForAI.requestName}
+- **Resultado General:** ${dataForAI.overallStatus} - (${dataForAI.passedCount} de ${dataForAI.totalCount} pasaron)
+- **Fecha de Ejecución:** ${dataForAI.timestamp}
+- **Endpoint:** ${dataForAI.method} ${dataForAI.url}
+- **Tiempo de Respuesta:** ${dataForAI.responseTime}
+
+## 2. Detalles de la Request
+### Payload Enviado
+\`\`\`json
+${dataForAI.requestPayload || '{}'}
+\`\`\`
+
+### Headers Enviados
+\`\`\`json
+${dataForAI.requestHeaders || '{}'}
+\`\`\`
+
+## 3. Detalles de la Respuesta
+### Código de Estado
+- ${dataForAI.responseStatusCode} - ${dataForAI.responseStatusText || ''}
+
+### Cuerpo de la Respuesta
+\`\`\`json
+${dataForAI.responseBody || '{}'}
+\`\`\`
+
+### Headers de la Respuesta
+\`\`\`json
+${dataForAI.responseHeaders || '{}'}
+\`\`\`
+
+## 4. Resultados Detallados de las Pruebas
+${dataForAI.detailedTestResults.map(result => `
+- ${result.passed ? '✅' : '❌'} ${result.name}
+${!result.passed ? `  - **Error:** ${result.error}` : ''}`).join('')}
+
+## 5. Análisis y Recomendaciones
+Analiza el estado general del endpoint considerando el código HTTP, la estructura del JSON, los tokens presentes (si existen) y la validez de los datos. Si todo fue exitoso, incluye una breve validación de salud del endpoint. Si hubo fallas, explica de forma técnica y concisa las causas más probables y qué se podría revisar.
+
+Entrega solo el informe final, sin explicaciones adicionales, sin repetir el contenido JSON ni los datos crudos.
+`;
+
+    try {
+        const response = await ai.models.generateContent({
+            model: "gemini-2.5-flash",
+            contents: prompt,
+        });
+        
+        return response.text;
+
+    } catch (error) {
+        console.error("Gemini API Error:", error);
+        throw new Error(`Error al generar el informe de pruebas: ${error instanceof Error ? error.message : 'Error desconocido'}`);
     }
 };
