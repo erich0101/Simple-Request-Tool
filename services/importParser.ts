@@ -43,8 +43,8 @@ function parseCurl(curl: string): PostmanItem | null {
                 if (separatorIndex !== -1) {
                     const key = header.substring(0, separatorIndex).trim();
                     const value = header.substring(separatorIndex + 1).trim();
-                    // Filter out the Pragma header
-                    if (key.toLowerCase() !== 'pragma') {
+                    // Filter out Pragma header and any header with a value of "no-cache"
+                    if (key.toLowerCase() !== 'pragma' && value.toLowerCase() !== 'no-cache') {
                         request.header.push({ key, value, type: 'text' });
                     }
                 }
