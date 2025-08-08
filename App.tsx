@@ -22,6 +22,7 @@ import NewEnvironmentModal from './components/NewEnvironmentModal';
 import { generateCurlCommand } from './services/curlGenerator';
 import ReportModal from './components/ReportModal';
 import TestReportModal from './components/TestReportModal';
+import { parseImportText } from './services/importParser';
 
 // --- START HELPER FUNCTIONS ---
 const getActiveEnvironmentVariables = (environments: Environment[], activeEnvironmentId: string | null): Record<string, string> => {
@@ -524,69 +525,67 @@ const App: React.FC = () => {
     };
     
     const handleImportText = (text: string) => {
-        let importedCollection: PostmanCollection | null = null;
-        try {
-            const parsed = JSON.parse(text);
-            if (parsed.info && parsed.item) { // Postman collection
-                importedCollection = parsed;
-            } else if (parsed.openapi || parsed.swagger) { // OpenAPI/Swagger JSON
-                importedCollection = parseOpenApi(parsed);
-            } else {
-                 throw new Error("JSON structure not recognized as Postman or OpenAPI.");
-            }
-        } catch (jsonError) {
-             try {
-                const parsedYaml = yaml.load(text); // OpenAPI/Swagger YAML
-                if (typeof parsedYaml === 'object' && parsedYaml !== null && ('openapi' in parsedYaml || 'swagger' in parsedYaml)) {
-                    importedCollection = parseOpenApi(parsedYaml);
-                } else {
-                    throw new Error("Content is not a valid JSON or OpenAPI YAML.");
-                }
-            } catch (yamlError) {
-                alert(`Import failed. The provided text is not a valid Postman Collection (JSON), OpenAPI/Swagger (JSON or YAML) specification.\n\nJSON Error: ${jsonError.message}\n\nYAML Error: ${yamlError.message}`);
-                setImportModalOpen(false);
-                return;
-            }
-        }
+        const result = parseImportText(text);
 
-        if (!importedCollection) {
-            alert("Failed to parse import data.");
+        if (!result) {
+            alert(`Import failed. The provided text could not be parsed as cURL, fetch, Postman Collection (JSON), or OpenAPI/Swagger (JSON or YAML). Please check the format and try again.`);
             setImportModalOpen(false);
             return;
         }
-    
-        // Ensure all items in the imported collection have unique IDs
-        const itemsWithIds = ensureUniqueIds(importedCollection.item);
 
-        // Create a new folder item from the imported collection
-        const newFolder: PostmanItem = {
-            id: crypto.randomUUID(),
-            name: importedCollection.info.name || 'Imported Collection',
-            item: itemsWithIds,
-        };
-        
-        setCollection(currentCollection => {
-            if (!currentCollection) {
-                // If no collection exists, create a new one with the imported folder
-                return {
-                    info: {
-                        _postman_id: crypto.randomUUID(),
-                        name: 'My QA Workspace',
-                        schema: 'https://schema.getpostman.com/json/collection/v2.1.0/collection.json'
-                    },
-                    item: [newFolder],
-                };
-            } else {
-                // If a collection exists, add the new folder to it
-                return {
-                    ...currentCollection,
-                    item: [...currentCollection.item, newFolder],
-                };
-            }
-        });
+        // Check if it's a collection by looking for the 'info' property
+        if ('info' in result) {
+            const importedCollection = result as PostmanCollection;
+            const itemsWithIds = ensureUniqueIds(importedCollection.item);
+
+            const newFolder: PostmanItem = {
+                id: crypto.randomUUID(),
+                name: importedCollection.info.name || 'Imported Collection',
+                item: itemsWithIds,
+            };
+
+            setCollection(currentCollection => {
+                if (!currentCollection) {
+                    return {
+                        info: {
+                            _postman_id: crypto.randomUUID(),
+                            name: 'My QA Workspace',
+                            schema: 'https://schema.getpostman.com/json/collection/v2.1.0/collection.json'
+                        },
+                        item: [newFolder],
+                    };
+                } else {
+                    return {
+                        ...currentCollection,
+                        item: [...currentCollection.item, newFolder],
+                    };
+                }
+            });
+        } else { // It's a single PostmanItem from cURL or fetch
+            const newRequestItem = result as PostmanItem;
+            setCollection(currentCollection => {
+                if (!currentCollection) {
+                    return {
+                        info: {
+                            _postman_id: crypto.randomUUID(),
+                            name: 'My QA Workspace',
+                            schema: 'https://schema.getpostman.com/json/collection/v2.1.0/collection.json'
+                        },
+                        item: [newRequestItem],
+                    };
+                } else {
+                    return {
+                        ...currentCollection,
+                        item: [...currentCollection.item, newRequestItem],
+                    };
+                }
+            });
+            handleSetActiveRequest(newRequestItem.id!);
+        }
 
         setImportModalOpen(false);
     };
+
     
     const handleImportFile = (file: File) => {
         const reader = new FileReader();
