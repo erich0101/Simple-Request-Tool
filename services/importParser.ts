@@ -1,3 +1,4 @@
+
 import { PostmanCollection, PostmanItem, PostmanRequest } from '../types';
 import { parseOpenApi } from './openapiParser';
 import yaml from 'js-yaml';
@@ -42,7 +43,10 @@ function parseCurl(curl: string): PostmanItem | null {
                 if (separatorIndex !== -1) {
                     const key = header.substring(0, separatorIndex).trim();
                     const value = header.substring(separatorIndex + 1).trim();
-                    request.header.push({ key, value, type: 'text' });
+                    // Filter out the Pragma header
+                    if (key.toLowerCase() !== 'pragma') {
+                        request.header.push({ key, value, type: 'text' });
+                    }
                 }
                 i++;
             }
