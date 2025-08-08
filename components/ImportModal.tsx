@@ -56,7 +56,7 @@ const ImportModal: React.FC<ImportModalProps> = ({ isOpen, onClose, onImportText
                  <textarea
                     value={rawText}
                     onChange={(e) => setRawText(e.target.value)}
-                    placeholder="Paste your cURL, Postman Collection, or OpenAPI/Swagger spec here."
+                    placeholder="Paste your cURL, Fetch, Postman Collection, or OpenAPI/Swagger spec here."
                     className="w-full h-48 p-2 bg-gray-900 border border-gray-600 rounded-md font-mono text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                     aria-label="Raw text input for import"
                 />
