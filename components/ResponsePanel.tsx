@@ -15,6 +15,25 @@ interface ResponsePanelProps {
 type ResponseTab = 'Body' | 'Headers' | 'Tests';
 type BodyViewMode = 'raw' | 'tree';
 
+const formatTime = (ms: number) => {
+  if (ms < 1000) return `${ms} ms`;
+  const seconds = ms / 1000;
+  if (seconds < 60) return `${seconds.toFixed(2)} s`;
+  const minutes = Math.floor(seconds / 60);
+  const remainingSeconds = Math.round(seconds % 60);
+  return `${minutes}m ${remainingSeconds.toString().padStart(2, '0')}s`;
+};
+
+const formatSize = (bytes: number) => {
+  if (bytes === undefined || bytes === null || isNaN(bytes)) return 'N/A';
+  if (bytes === 0) return '0 B';
+  const k = 1024;
+  const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return `${parseFloat((bytes / Math.pow(k, i)).toFixed(2))} ${sizes[i]}`;
+};
+
+
 const ResponsePanel: React.FC<ResponsePanelProps> = ({ responseData, loading, onOpenReport, onOpenTestReport }) => {
     const [activeTab, setActiveTab] = useState<ResponseTab>('Body');
     const [bodyViewMode, setBodyViewMode] = useState<BodyViewMode>('raw');
@@ -61,27 +80,37 @@ const ResponsePanel: React.FC<ResponsePanelProps> = ({ responseData, loading, on
                         </button>
                     ))}
                 </div>
-                <div className="ml-auto flex items-center space-x-4 pr-4">
-                    {response && response.status > 0 && (
-                       <>
-                         <button 
-                            onClick={onOpenReport} 
-                            title="Crear Reporte" 
-                            className="p-1.5 rounded text-gray-400 hover:bg-gray-600 hover:text-white"
-                         >
-                            <DocumentReportIcon className="w-5 h-5"/>
-                        </button>
-                        <span className={`text-sm font-semibold ${response.status >= 200 && response.status < 300 ? 'text-green-400' : 'text-red-400'}`}>
-                            Status: {response.status} {response.statusText}
-                        </span>
-                       </>
+                <div className="ml-auto flex items-center space-x-4 pr-4 text-sm">
+                   {response && (
+                        <>
+                            {response.status > 0 ? (
+                                <div className="text-gray-400">
+                                    Status: <span className={`font-semibold ${response.status >= 200 && response.status < 300 ? 'text-green-400' : 'text-red-400'}`}>{response.status} {response.statusText}</span>
+                                </div>
+                            ) : (
+                                <div className="text-gray-400">
+                                    Status: <span className="font-semibold text-red-400">{response.statusText}</span>
+                                </div>
+                            )}
+                            {responseData.responseTime !== undefined && (
+                                <div className="text-gray-400">
+                                    Time: <span className="font-semibold text-gray-200">{formatTime(responseData.responseTime)}</span>
+                                </div>
+                            )}
+                            {responseData.size !== undefined && (
+                                <div className="text-gray-400">
+                                    Size: <span className="font-semibold text-gray-200">{formatSize(responseData.size)}</span>
+                                </div>
+                            )}
+                             <button
+                                onClick={onOpenReport}
+                                title="Crear Reporte"
+                                className="p-1.5 rounded text-gray-400 hover:bg-gray-600 hover:text-white"
+                             >
+                                <DocumentReportIcon className="w-5 h-5"/>
+                            </button>
+                        </>
                     )}
-                     {response && response.status === 0 && (
-                         <span className="text-sm font-semibold text-red-400">
-                            Status: {response.statusText}
-                        </span>
-                    )}
-
                 </div>
             </div>
         );
@@ -99,7 +128,6 @@ const ResponsePanel: React.FC<ResponsePanelProps> = ({ responseData, loading, on
             case 'Body':
                  if (responseData?.downloadInfo) {
                     const { url, filename, type, size } = responseData.downloadInfo;
-                    const sizeInMB = (size / (1024 * 1024)).toFixed(2);
                     return (
                         <div className="flex flex-col items-center justify-center h-full p-8 text-center bg-gray-800">
                             <DownloadIcon className="w-16 h-16 text-blue-400 mb-4" />
@@ -107,7 +135,7 @@ const ResponsePanel: React.FC<ResponsePanelProps> = ({ responseData, loading, on
                             <div className="text-left bg-gray-900 p-4 rounded-lg mb-4 shadow-md">
                                 <p className="text-gray-300"><span className="font-semibold text-gray-400 w-20 inline-block">Nombre:</span> {filename}</p>
                                 <p className="text-gray-300"><span className="font-semibold text-gray-400 w-20 inline-block">Tipo:</span> {type || 'desconocido'}</p>
-                                <p className="text-gray-300"><span className="font-semibold text-gray-400 w-20 inline-block">Tamaño:</span> {sizeInMB} MB ({size.toLocaleString()} bytes)</p>
+                                <p className="text-gray-300"><span className="font-semibold text-gray-400 w-20 inline-block">Tamaño:</span> {formatSize(size)}</p>
                             </div>
                             <a
                                 href={url}

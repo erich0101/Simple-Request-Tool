@@ -7,6 +7,7 @@ import { okaidia } from '@uiw/codemirror-theme-okaidia';
 import { EditorView } from '@codemirror/view';
 import { variableHighlighter } from '../services/variableHighlighter';
 import { EditorState } from '@codemirror/state';
+import { searchHighlighter } from '../services/searchHighlighter';
 
 interface CodeEditorProps {
     value: string;
@@ -16,9 +17,10 @@ interface CodeEditorProps {
     wrapLines?: boolean;
     activeVariables?: string[];
     singleLine?: boolean;
+    searchQuery?: string;
 }
 
-const CodeEditor: React.FC<CodeEditorProps> = ({ value, onChange, language, readOnly = false, wrapLines = false, activeVariables, singleLine = false }) => {
+const CodeEditor: React.FC<CodeEditorProps> = ({ value, onChange, language, readOnly = false, wrapLines = false, activeVariables, singleLine = false, searchQuery }) => {
     const extensions = [];
     if (language === 'javascript') {
         extensions.push(javascript({ jsx: true, typescript: true }));
@@ -32,6 +34,10 @@ const CodeEditor: React.FC<CodeEditorProps> = ({ value, onChange, language, read
     
     if (activeVariables) {
         extensions.push(variableHighlighter(activeVariables));
+    }
+    
+    if (searchQuery) {
+        extensions.push(searchHighlighter(searchQuery));
     }
 
     if (singleLine) {

@@ -1,8 +1,9 @@
 
+
 import React, { useState, useEffect } from 'react';
 import { PostmanItem, PostmanRequest } from '../types';
 import CodeEditor from './CodeEditor';
-import { AIGenerateIcon, TrashIcon, PlusIcon, FormatIcon, VerticalLayoutIcon, HorizontalLayoutIcon } from './icons';
+import { AIGenerateIcon, TrashIcon, PlusIcon, FormatIcon, VerticalLayoutIcon, HorizontalLayoutIcon, BoltIcon } from './icons';
 
 interface RequestPanelProps {
     item: PostmanItem;
@@ -11,6 +12,7 @@ interface RequestPanelProps {
     onSend: (item: PostmanItem, files?: Record<string, File>) => void;
     onUpdateItem: (item: PostmanItem) => void;
     onGenerateTests: (item: PostmanItem, response: any) => void;
+    onOpenLoadTestModal: (request: PostmanRequest) => void;
     layoutMode: 'horizontal' | 'vertical';
     setLayoutMode: (mode: 'horizontal' | 'vertical') => void;
     activeVariables?: string[];
@@ -40,7 +42,7 @@ const CONTENT_TYPE_SUGGESTIONS = [
   'text/plain',
 ];
 
-const RequestPanel: React.FC<RequestPanelProps> = ({ item, response, loading, onSend, onUpdateItem, onGenerateTests, layoutMode, setLayoutMode, activeVariables }) => {
+const RequestPanel: React.FC<RequestPanelProps> = ({ item, response, loading, onSend, onUpdateItem, onGenerateTests, onOpenLoadTestModal, layoutMode, setLayoutMode, activeVariables }) => {
     const [activeTab, setActiveTab] = useState<Tab>('Body');
     const [currentItem, setCurrentItem] = useState<PostmanItem>(item);
     const [formFiles, setFormFiles] = useState<Record<string, File>>({});
@@ -296,6 +298,7 @@ const RequestPanel: React.FC<RequestPanelProps> = ({ item, response, loading, on
                             activeVariables={activeVariables}
                         />
                     </div>
+                    <button onClick={() => onOpenLoadTestModal(currentItem.request!)} title="Prueba de Carga" className="p-2 bg-yellow-600 hover:bg-yellow-500 rounded text-white"><BoltIcon className="w-5 h-5"/></button>
                     <button onClick={() => onSend(currentItem, formFiles)} disabled={loading} className="px-4 py-1.5 bg-blue-600 hover:bg-blue-500 rounded text-white font-semibold disabled:bg-blue-800 disabled:cursor-wait">
                         {loading ? 'Sending...' : 'Send'}
                     </button>
@@ -346,9 +349,12 @@ const RequestPanel: React.FC<RequestPanelProps> = ({ item, response, loading, on
                         />
                     </div>
                  </div>
-                 <button onClick={() => onSend(currentItem, formFiles)} disabled={loading} className="mt-2 w-full px-4 py-1.5 bg-blue-600 hover:bg-blue-500 rounded text-white font-semibold disabled:bg-blue-800 disabled:cursor-wait">
-                    {loading ? 'Sending...' : 'Send'}
-                 </button>
+                 <div className="flex items-center space-x-2 mt-2">
+                     <button onClick={() => onSend(currentItem, formFiles)} disabled={loading} className="flex-1 px-4 py-1.5 bg-blue-600 hover:bg-blue-500 rounded text-white font-semibold disabled:bg-blue-800 disabled:cursor-wait">
+                        {loading ? 'Sending...' : 'Send'}
+                     </button>
+                      <button onClick={() => onOpenLoadTestModal(currentItem.request!)} title="Prueba de Carga" className="p-2 bg-yellow-600 hover:bg-yellow-500 rounded text-white"><BoltIcon className="w-5 h-5"/></button>
+                 </div>
             </div>
 
 

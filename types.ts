@@ -57,6 +57,7 @@ export interface ResponseData {
     requestHeaders?: Record<string, string>;
     requestTimestamp?: number;
     responseTime?: number;
+    size?: number;
     downloadInfo?: {
         url: string;
         filename: string;
@@ -76,3 +77,30 @@ export interface EnvironmentValue {
     value: string;
     enabled: boolean;
 }
+
+// --- Load Testing Types ---
+
+export interface LoadTestConfig {
+    totalRequests: number;
+    concurrency: number;
+    delay: number;
+    timeout: number;
+}
+
+export interface LoadTestStats {
+    sent: number;
+    success: number;
+    error: number;
+    timeout: number;
+    totalTime: number;
+    avgTime: number;
+    rps: number;
+    errorsByStatus: Record<number, number>;
+}
+
+export type LoadTestWorkerMessage =
+    | { type: 'start'; config: LoadTestConfig; request: PostmanRequest, variables: Record<string, string> }
+    | { type: 'stop' }
+    | { type: 'progress'; stats: LoadTestStats }
+    | { type: 'complete'; stats: LoadTestStats }
+    | { type: 'error'; message: string };

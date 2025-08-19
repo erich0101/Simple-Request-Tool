@@ -1,5 +1,10 @@
 
 
+
+
+
+
+
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { PostmanCollection, PostmanItem, PostmanRequest, TestResult, ResponseData, Environment, EnvironmentValue } from './types';
 import Layout from './components/Layout';
@@ -23,6 +28,7 @@ import { generateCurlCommand } from './services/curlGenerator';
 import ReportModal from './components/ReportModal';
 import TestReportModal from './components/TestReportModal';
 import { parseImportText } from './services/importParser';
+import LoadTestModal from './components/LoadTestModal';
 
 // --- START HELPER FUNCTIONS ---
 const getActiveEnvironmentVariables = (environments: Environment[], activeEnvironmentId: string | null): Record<string, string> => {
@@ -92,6 +98,8 @@ const App: React.FC = () => {
     const [varsForNewEnv, setVarsForNewEnv] = useState<Record<string, string>>({});
     const [reportModalItemId, setReportModalItemId] = useState<string | null>(null);
     const [testReportItemId, setTestReportItemId] = useState<string | null>(null);
+    const [isLoadTestModalOpen, setIsLoadTestModalOpen] = useState(false);
+    const [requestForLoadTest, setRequestForLoadTest] = useState<PostmanRequest | null>(null);
 
 
     // --- Environment State ---
@@ -145,6 +153,8 @@ const App: React.FC = () => {
                         requestHeaders: parsedResponses[key].requestHeaders,
                         requestTimestamp: parsedResponses[key].requestTimestamp,
                         responseTime: parsedResponses[key].responseTime,
+                        size: parsedResponses[key].size,
+                        downloadInfo: parsedResponses[key].downloadInfo,
                     }
                 }
                 setResponses(hydratedResponses);
@@ -210,6 +220,8 @@ const App: React.FC = () => {
                     requestHeaders: responses[key].requestHeaders,
                     requestTimestamp: responses[key].requestTimestamp,
                     responseTime: responses[key].responseTime,
+                    size: responses[key].size,
+                    downloadInfo: responses[key].downloadInfo,
                  };
             }
         });
@@ -390,13 +402,22 @@ const App: React.FC = () => {
                 // 2. Fallback to URL path if filename was not found in headers
                 if (filename === 'download') {
                     try {
-                       const path = new URL(url).pathname;
-                       const lastSegment = path.substring(path.lastIndexOf('/') + 1);
-                       if (lastSegment) {
-                           filename = lastSegment;
-                       }
-                    } catch (e) { /* ignore URL parsing errors */ }
+                        // Only attempt to parse the URL if it's a non-empty string.
+                        // `res.url` is the most reliable source (final URL after redirects).
+                        if (res.url) {
+                            const finalUrl = new URL(res.url);
+                            const lastSegment = finalUrl.pathname.substring(finalUrl.pathname.lastIndexOf('/') + 1);
+                            if (lastSegment) {
+                                filename = lastSegment;
+                            }
+                        }
+                    } catch (e) {
+                        // If parsing `res.url` fails, we can simply log it and continue.
+                        // The filename will remain 'download', which is a safe fallback.
+                        console.warn(`Could not parse response URL '${res.url}' to determine filename:`, e);
+                    }
                 }
+
 
                 // 3. Fallback to guessing extension from MIME type if filename has no extension
                 if (!filename.includes('.')) {
@@ -417,18 +438,16 @@ const App: React.FC = () => {
                         filename = `${filename}.${ext}`;
                     }
                 }
-
-                const fileInfoBody = `Archivo descargable detectado: ${filename} (${(blob.size / 1024).toFixed(2)} KB)`;
                 
                 const responsePayload = {
                     status: res.status,
                     statusText: res.statusText,
                     headers: responseHeaders,
-                    body: fileInfoBody,
+                    body: `Archivo descargable detectado: ${filename} (${(blob.size / 1024).toFixed(2)} KB)`,
                 };
                 
                 const testScript = item.event?.find(e => e.listen === 'test')?.script.exec.join('\n') || '';
-                const { testResults, updatedVariables } = await runTests(testScript, res, fileInfoBody, variables);
+                const { testResults, updatedVariables } = await runTests(testScript, res, responsePayload.body, variables);
                 
                 handleVariableUpdates(variables, updatedVariables);
                 
@@ -447,13 +466,16 @@ const App: React.FC = () => {
                         requestTimestamp: startTime, 
                         responseTime, 
                         requestHeaders: requestHeadersForReport,
-                        downloadInfo: downloadInfo
+                        downloadInfo: downloadInfo,
+                        size: blob.size
                     }
                 }));
                 setMainView('response');
             } else {
                 let responseBody: any;
                 const textBody = await res.text();
+                const responseSize = new Blob([textBody]).size;
+
                 if (contentType && contentType.includes('application/json')) {
                     try {
                         responseBody = JSON.parse(textBody);
@@ -477,7 +499,7 @@ const App: React.FC = () => {
                 
                 handleVariableUpdates(variables, updatedVariables);
                 
-                setResponses(prev => ({...prev, [item.id!]: { response: responseData, testResults, requestTimestamp: startTime, responseTime, requestHeaders: requestHeadersForReport }}));
+                setResponses(prev => ({...prev, [item.id!]: { response: responseData, testResults, requestTimestamp: startTime, responseTime, requestHeaders: requestHeadersForReport, size: responseSize }}));
                 setMainView('response');
             }
         } catch (error) {
@@ -489,7 +511,9 @@ const App: React.FC = () => {
                 headers: {},
                 body: error instanceof Error ? { error: error.name, message: error.message, stack: error.stack } : { error: 'Unknown error', message: String(error) }
             };
-             setResponses(prev => ({...prev, [item.id!]: { response: errorResponse, testResults: [], requestTimestamp: startTime, responseTime, requestHeaders: requestHeadersForReport }}));
+             const errorBodyString = JSON.stringify(errorResponse.body);
+             const errorSize = new Blob([errorBodyString]).size;
+             setResponses(prev => ({...prev, [item.id!]: { response: errorResponse, testResults: [], requestTimestamp: startTime, responseTime, requestHeaders: requestHeadersForReport, size: errorSize }}));
              setMainView('response');
         } finally {
             setLoadingItemId(null);
@@ -709,6 +733,13 @@ const App: React.FC = () => {
         });
     };
 
+    const handleOpenLoadTestModal = (request: PostmanRequest) => {
+        if (request) {
+            setRequestForLoadTest(request);
+            setIsLoadTestModalOpen(true);
+        }
+    };
+    
     // --- END HANDLERS ---
     
     // --- START RECURSIVE ITEM MANIPULATION ---
@@ -942,6 +973,7 @@ const App: React.FC = () => {
                                     onSend={handleSendRequest}
                                     onUpdateItem={handleUpdateItem}
                                     onGenerateTests={handleGenerateTests}
+                                    onOpenLoadTestModal={handleOpenLoadTestModal}
                                     layoutMode={layoutMode}
                                     setLayoutMode={setLayoutMode}
                                     activeVariables={Object.keys(activeEnvironmentVariables)}
@@ -1040,6 +1072,14 @@ const App: React.FC = () => {
                 apiKey={apiKey}
                 onOpenApiKeyModal={() => setApiKeyModalOpen(true)}
             />
+            {isLoadTestModalOpen && requestForLoadTest && (
+                 <LoadTestModal
+                    isOpen={isLoadTestModalOpen}
+                    onClose={() => setIsLoadTestModalOpen(false)}
+                    request={requestForLoadTest}
+                    activeVariables={activeEnvironmentVariables}
+                />
+            )}
         </>
     );
 };

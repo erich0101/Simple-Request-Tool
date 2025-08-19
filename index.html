@@ -71,6 +71,91 @@
       .url-editor-wrapper .cm-editor.cm-focused .cm-scroller {
         overflow-x: hidden;
       }
+      /* Search Highlighting */
+      .cm-search-match {
+        background-color: #facc15; /* yellow-400 */
+        color: #111827; /* gray-900 */
+      }
+
+      /* Print specific styles */
+      @media print {
+          body * {
+              visibility: hidden;
+          }
+          #test-report-printable-area, #test-report-printable-area *,
+          #load-test-report-printable-area, #load-test-report-printable-area * {
+              visibility: visible;
+          }
+          #test-report-printable-area {
+              position: absolute;
+              left: 0;
+              top: 0;
+              width: 100%;
+              padding: 1rem;
+              margin: 0;
+              background-color: white !important;
+              color: black !important;
+              font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif;
+          }
+          .no-print {
+              display: none !important;
+          }
+          /* Override dark mode colors for printing */
+          #test-report-printable-area h1,
+          #test-report-printable-area h2,
+          #test-report-printable-area h3,
+          #test-report-printable-area p,
+          #test-report-printable-area span,
+          #test-report-printable-area li,
+          #test-report-printable-area div,
+          #test-report-printable-area code {
+              color: black !important;
+          }
+          #test-report-printable-area pre, #test-report-printable-area code {
+              background-color: #f4f4f4 !important;
+              border: 1px solid #ccc;
+              border-radius: 4px;
+              padding: 8px;
+              white-space: pre-wrap;
+              word-break: break-all;
+          }
+           #test-report-printable-area .status-passed,
+           #test-report-printable-area .status-passed-icon {
+              color: green !important;
+          }
+           #test-report-printable-area .status-failed,
+           #test-report-printable-area .status-failed-icon {
+              color: red !important;
+          }
+          #test-report-printable-area ul {
+            list-style-type: none;
+            padding-left: 0;
+          }
+
+          /* Load Test Report Styles */
+          #load-test-report-printable-area {
+              position: absolute;
+              left: 0;
+              top: 0;
+              width: 100%;
+              padding: 2rem; /* More padding for a formal report */
+              margin: 0;
+              background-color: white !important;
+              color: black !important;
+              font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif;
+          }
+
+          /* Ensure all text in report is black */
+           #load-test-report-printable-area div,
+           #load-test-report-printable-area p,
+           #load-test-report-printable-area h1,
+           #load-test-report-printable-area h2,
+           #load-test-report-printable-area span,
+           #load-test-report-printable-area li {
+              color: black !important;
+              background-color: transparent !important;
+           }
+      }
     </style>
   <script type="importmap">
 {
