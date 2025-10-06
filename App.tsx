@@ -1,10 +1,4 @@
 
-
-
-
-
-
-
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { PostmanCollection, PostmanItem, PostmanRequest, TestResult, ResponseData, Environment, EnvironmentValue } from './types';
 import Layout from './components/Layout';
@@ -153,8 +147,6 @@ const App: React.FC = () => {
                         requestHeaders: parsedResponses[key].requestHeaders,
                         requestTimestamp: parsedResponses[key].requestTimestamp,
                         responseTime: parsedResponses[key].responseTime,
-                        size: parsedResponses[key].size,
-                        downloadInfo: parsedResponses[key].downloadInfo,
                     }
                 }
                 setResponses(hydratedResponses);
@@ -220,8 +212,6 @@ const App: React.FC = () => {
                     requestHeaders: responses[key].requestHeaders,
                     requestTimestamp: responses[key].requestTimestamp,
                     responseTime: responses[key].responseTime,
-                    size: responses[key].size,
-                    downloadInfo: responses[key].downloadInfo,
                  };
             }
         });
@@ -438,16 +428,18 @@ const App: React.FC = () => {
                         filename = `${filename}.${ext}`;
                     }
                 }
+
+                const fileInfoBody = `Archivo descargable detectado: ${filename} (${(blob.size / 1024).toFixed(2)} KB)`;
                 
                 const responsePayload = {
                     status: res.status,
                     statusText: res.statusText,
                     headers: responseHeaders,
-                    body: `Archivo descargable detectado: ${filename} (${(blob.size / 1024).toFixed(2)} KB)`,
+                    body: fileInfoBody,
                 };
                 
                 const testScript = item.event?.find(e => e.listen === 'test')?.script.exec.join('\n') || '';
-                const { testResults, updatedVariables } = await runTests(testScript, res, responsePayload.body, variables);
+                const { testResults, updatedVariables } = await runTests(testScript, res, fileInfoBody, variables);
                 
                 handleVariableUpdates(variables, updatedVariables);
                 
@@ -466,16 +458,13 @@ const App: React.FC = () => {
                         requestTimestamp: startTime, 
                         responseTime, 
                         requestHeaders: requestHeadersForReport,
-                        downloadInfo: downloadInfo,
-                        size: blob.size
+                        downloadInfo: downloadInfo
                     }
                 }));
                 setMainView('response');
             } else {
                 let responseBody: any;
                 const textBody = await res.text();
-                const responseSize = new Blob([textBody]).size;
-
                 if (contentType && contentType.includes('application/json')) {
                     try {
                         responseBody = JSON.parse(textBody);
@@ -499,22 +488,54 @@ const App: React.FC = () => {
                 
                 handleVariableUpdates(variables, updatedVariables);
                 
-                setResponses(prev => ({...prev, [item.id!]: { response: responseData, testResults, requestTimestamp: startTime, responseTime, requestHeaders: requestHeadersForReport, size: responseSize }}));
+                setResponses(prev => ({...prev, [item.id!]: { response: responseData, testResults, requestTimestamp: startTime, responseTime, requestHeaders: requestHeadersForReport }}));
                 setMainView('response');
             }
         } catch (error) {
-             const endTime = Date.now();
-             const responseTime = endTime - startTime;
-             const errorResponse = {
+            const endTime = Date.now();
+            const responseTime = endTime - startTime;
+
+            let errorBody: any;
+            if (error instanceof Error && error.message.toLowerCase().includes('failed to fetch')) {
+                errorBody = {
+                    error: "Error de Red",
+                    message: "La solicitud no pudo completarse. Esto a menudo se debe a un problema de red o a una restricción de la política de Intercambio de Recursos de Origen Cruzado (CORS) en el servidor.",
+                    details: "Para obtener información más específica, por favor revise la consola de desarrollador del navegador (presione F12). Busque errores relacionados con CORS o fallos de red.",
+                    possible_causes: [
+                        "Política CORS: El servidor no está configurado para aceptar solicitudes de este origen. La consola del desarrollador mostrará un error 'Cross-Origin Request Blocked'.",
+                        "Conectividad de Red: Es posible que su dispositivo esté desconectado o que haya un problema con su red.",
+                        "Error de DNS: No se pudo resolver el nombre de dominio del servidor.",
+                        "URL Inválida: La URL podría estar mal formada o ser inalcanzable.",
+                        "Bloqueado por el Navegador: Un bloqueador de anuncios u otra extensión del navegador podría estar bloqueando la solicitud."
+                    ],
+                    original_error: {
+                        name: error.name,
+                        message: error.message
+                    }
+                };
+            } else if (error instanceof Error) {
+                 errorBody = {
+                    error: error.name,
+                    message: error.message,
+                    stack: error.stack
+                 }
+            } else {
+                errorBody = {
+                    error: 'Error de Solicitud Desconocido',
+                    message: 'Ocurrió un error inesperado al enviar la solicitud.',
+                    details: String(error)
+                };
+            }
+
+            const errorResponse = {
                 status: 0,
-                statusText: 'Request Error',
+                statusText: 'Solicitud Fallida',
                 headers: {},
-                body: error instanceof Error ? { error: error.name, message: error.message, stack: error.stack } : { error: 'Unknown error', message: String(error) }
+                body: errorBody
             };
-             const errorBodyString = JSON.stringify(errorResponse.body);
-             const errorSize = new Blob([errorBodyString]).size;
-             setResponses(prev => ({...prev, [item.id!]: { response: errorResponse, testResults: [], requestTimestamp: startTime, responseTime, requestHeaders: requestHeadersForReport, size: errorSize }}));
-             setMainView('response');
+
+            setResponses(prev => ({...prev, [item.id!]: { response: errorResponse, testResults: [], requestTimestamp: startTime, responseTime, requestHeaders: requestHeadersForReport }}));
+            setMainView('response');
         } finally {
             setLoadingItemId(null);
         }
@@ -702,9 +723,11 @@ const App: React.FC = () => {
         const newEnv: Environment = {
             id: crypto.randomUUID(),
             name,
+            // FIX: Explicitly convert the value to a string. TypeScript infers `value` from
+            // `Object.entries` as `unknown`, which is not assignable to `string`.
             values: Object.entries(varsForNewEnv).map(([key, value]) => ({
                 key,
-                value,
+                value: String(value),
                 enabled: true,
             })),
         };
